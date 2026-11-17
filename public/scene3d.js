@@ -55,7 +55,7 @@ function blob(radius, opacity) {
 export function buildScene() {
   const scene = new THREE.Scene();
   scene.background = null;
-  scene.fog = new THREE.Fog(0x14121a, 14, 30);
+  scene.fog = new THREE.Fog(0x14121a, 26, 60);   // 방이 넓어져 안개를 멀리 민다
 
   const collidables = [];     // 화살이 꽂힐 수 있는 것들
   const api = { scene: scene, collidables: collidables, lampLights: [], tvLight: null };
@@ -125,12 +125,12 @@ export function buildScene() {
     g.strokeStyle = 'rgba(226,178,120,.14)'; g.lineWidth = 3;
     g.strokeRect(30, 30, w - 60, h - 60);
   });
-  const carpet = new THREE.Mesh(
-    new THREE.BoxGeometry(R.CARPET.w, 0.02, R.CARPET.d),
-    new THREE.MeshStandardMaterial({ map: carpetTex.tex, roughness: 1 })
-  );
-  carpet.position.set(R.CARPET.x, 0.011, R.CARPET.z);
-  scene.add(carpet);
+  const carpetMat = new THREE.MeshStandardMaterial({ map: carpetTex.tex, roughness: 1 });
+  (R.CARPETS || [R.CARPET]).forEach((c) => {
+    const rug = new THREE.Mesh(new THREE.BoxGeometry(c.w, 0.02, c.d), carpetMat);
+    rug.position.set(c.x, 0.011, c.z);
+    scene.add(rug);
+  });
 
   /* 벽에 거는 물건의 자리 — 벽면에서 안쪽(방 쪽)으로 off 만큼 띄운다 */
   function onWall(item, off) {

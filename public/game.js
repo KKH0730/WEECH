@@ -70,7 +70,7 @@ const cam = {
   yaw: 0,
   pitch: 0.88,
   look: 0.0,
-  dist: 8.6
+  dist: 12.5
 };
 const camPos = new THREE.Vector3(0, 6, 10);
 const camAim = new THREE.Vector3(0, 1, 0);
@@ -375,8 +375,8 @@ function enterRoom() {
   myAvatar = makeAvatar({ name: me.name, seed: myId, isMe: true });
   scene.add(myAvatar.root);
 
-  cam.yaw = 0; cam.pitch = 0.88; cam.mode = 'lounge';
-  camPos.set(me.x, 7, me.z + 7);
+  cam.yaw = 0; cam.pitch = 0.88; cam.dist = 12.5; cam.mode = 'lounge';
+  camPos.set(me.x, 10, me.z + 10);
 
   applyHostUI();
   applyPlayback();
@@ -592,6 +592,12 @@ window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; d
 const canvas = renderer.domElement;
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
+canvas.addEventListener('wheel', (e) => {
+  if (screen !== 'room' || cam.mode === 'watch') return;
+  e.preventDefault();
+  cam.dist = Math.max(5, Math.min(22, cam.dist + Math.sign(e.deltaY) * 1.1));
+}, { passive: false });
+
 canvas.addEventListener('pointerdown', (e) => {
   if (screen !== 'room') return;
   drag.on = true; drag.moved = 0; drag.lx = e.clientX; drag.ly = e.clientY;
@@ -782,7 +788,10 @@ $('helpBtn').addEventListener('click', () => { $('helpModal').hidden = false; })
 /* ------------------------------------------------------------------ */
 /* 갱신                                                                 */
 /* ------------------------------------------------------------------ */
-const SPEED = 2.6;
+const SPEED = 3.2;                 // 방이 넓어져 걸음을 조금 빠르게
+const TURN_RATE = 1.7;             // 방향키 좌우 회전 (rad/s)
+const TILT_RATE = 1.0;             // 라운지 뷰 위아래
+const LOOK_RATE = 0.9;             // 시청 모드 위아래
 let sendAt = 0;
 
 function update(dt, now) {
@@ -790,12 +799,29 @@ function update(dt, now) {
 
   let fx = 0, fz = 0;
   if (!typing) {
-    if (keys['w'] || keys['arrowup']) fz += 1;
-    if (keys['s'] || keys['arrowdown']) fz -= 1;
-    if (keys['a'] || keys['arrowleft']) fx -= 1;
-    if (keys['d'] || keys['arrowright']) fx += 1;
+    if (keys['w']) fz += 1;
+    if (keys['s']) fz -= 1;
+    if (keys['a']) fx -= 1;
+    if (keys['d']) fx += 1;
   }
   if (fx || fz) moveTarget = null;
+
+  /* 방향키로 시점 회전 (마우스 드래그와 같은 방향) */
+  if (!typing) {
+    let turn = 0, tilt = 0;
+    if (keys['arrowleft']) turn += 1;
+    if (keys['arrowright']) turn -= 1;
+    if (keys['arrowup']) tilt += 1;
+    if (keys['arrowdown']) tilt -= 1;
+    if (turn) cam.yaw += turn * TURN_RATE * dt;
+    if (tilt) {
+      if (cam.mode === 'watch') {
+        cam.look = Math.max(-0.6, Math.min(0.5, cam.look + tilt * LOOK_RATE * dt));
+      } else {
+        cam.pitch = Math.max(0.35, Math.min(1.32, cam.pitch + tilt * TILT_RATE * dt));
+      }
+    }
+  }
 
   let vx = 0, vz = 0;
   if (fx || fz) {

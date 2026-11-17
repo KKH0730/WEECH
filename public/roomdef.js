@@ -12,9 +12,9 @@
 
 const ROOM3D = (function () {
 
-  const W = 14, D = 10, H = 3.4;
+  const W = 22, D = 16, H = 4.4;
   const WALL = { x0: -W / 2, x1: W / 2, z0: -D / 2, z1: D / 2 };
-  const BOUND = { x0: -6.55, x1: 6.55, z0: -4.55, z1: 4.55 };   // 사람이 걸을 수 있는 범위
+  const BOUND = { x0: -10.45, x1: 10.45, z0: -7.45, z1: 7.45 };   // 사람이 걸을 수 있는 범위
 
   /* ---- 벽에 걸린 것들 --------------------------------------------
    *  wall : 'north' 정면 | 'left' 서쪽 | 'right' 동쪽 | 'south' 입구쪽
@@ -31,51 +31,73 @@ const ROOM3D = (function () {
     return { x: W / 2 - WALL_INSET, y: item.y, z: item.u, ry: -Math.PI / 2 };
   }
 
-  const TV = { w: 4.2, h: 2.3625, wall: 'north', u: 0, y: 1.95 };      // 16:9 — 정면 벽
-  const BOARD = { w: 2.6, h: 1.72, wall: 'right', u: 0.2, y: 1.8 };    // 재생목록 — 오른쪽 벽
+  const TV = { w: 6.0, h: 3.375, wall: 'north', u: 0, y: 2.4 };      // 16:9 — 정면 벽
+  const BOARD = { w: 3.2, h: 2.12, wall: 'right', u: 0.4, y: 2.1 };   // 재생목록 — 오른쪽 벽
 
   // 실버 · 골드 버튼 — 왼쪽 벽
   const plaques = [
-    { kind: 'silver', wall: 'left', u: -2.7, y: 2.16, s: 0.76, label: '100K' },
-    { kind: 'gold', wall: 'left', u: -1.55, y: 2.16, s: 0.76, label: '1M' }
+    { kind: 'silver', wall: 'left', u: -3.4, y: 2.7, s: 0.95, label: '100K' },
+    { kind: 'gold', wall: 'left', u: -2.0, y: 2.7, s: 0.95, label: '1M' }
   ];
 
-  // 액자 — 전부 왼쪽 벽에 모아 건다
+  // 액자 — 왼쪽 벽에 길게 늘어놓는다
   const frames = [
-    { wall: 'left', u: -2.7, y: 1.22, w: 0.86, h: 0.62, hue: 20 },
-    { wall: 'left', u: -1.55, y: 1.22, w: 0.62, h: 0.86, hue: 205 },
-    { wall: 'left', u: 0.1, y: 1.85, w: 1.0, h: 0.7, hue: 285 },
-    { wall: 'left', u: 0.1, y: 1.0, w: 0.7, h: 0.5, hue: 150 },
-    { wall: 'left', u: 1.5, y: 1.55, w: 0.66, h: 0.92, hue: 330 },
-    { wall: 'left', u: 2.9, y: 1.5, w: 0.92, h: 0.66, hue: 45 }
+    { wall: 'left', u: -5.6, y: 2.0, w: 1.1, h: 0.8, hue: 20 },
+    { wall: 'left', u: -5.6, y: 1.0, w: 0.8, h: 0.6, hue: 150 },
+    { wall: 'left', u: -3.4, y: 1.55, w: 1.0, h: 0.72, hue: 205 },
+    { wall: 'left', u: -2.0, y: 1.55, w: 0.72, h: 1.0, hue: 285 },
+    { wall: 'left', u: 0.0, y: 2.1, w: 1.3, h: 0.9, hue: 330 },
+    { wall: 'left', u: 0.0, y: 1.0, w: 0.9, h: 0.64, hue: 45 },
+    { wall: 'left', u: 2.1, y: 1.9, w: 0.84, h: 1.16, hue: 95 },
+    { wall: 'left', u: 3.9, y: 1.7, w: 1.16, h: 0.84, hue: 255 },
+    { wall: 'left', u: 5.9, y: 1.9, w: 0.96, h: 1.3, hue: 15 }
   ];
 
   /* ---- 바닥에 놓인 것들 ------------------------------------------ */
-  const CARPET = { x: 0, z: 0.7, w: 9.4, d: 5.8 };
+  const CARPETS = [
+    { x: 0, z: 0.6, w: 15.0, d: 7.2 },     // TV 앞 큰 러그
+    { x: 0, z: 5.5, w: 12.0, d: 4.2 }      // 뒤쪽 라운지 러그
+  ];
+  const CARPET = CARPETS[0];               // 호환용
 
   //  rot = y축 회전(라디안). 0 이면 등받이가 +z 쪽(남쪽), 즉 TV 를 바라본다.
   const furniture = [
-    { id: 'sofaL', type: 'sofa', x: -2.75, z: 1.25, rot: 0, w: 2.5, d: 1.05 },
-    { id: 'sofaR', type: 'sofa', x: 2.75, z: 1.25, rot: 0, w: 2.5, d: 1.05 },
-    { id: 'sofaB', type: 'sofa', x: 0, z: 3.5, rot: 0, w: 3.0, d: 1.05 },
-    { id: 'table', type: 'table', x: 0, z: 0.5, rot: 0, w: 1.9, d: 0.95 },
-    { id: 'chairL', type: 'chair', x: -5.1, z: 0.2, rot: 0.6, w: 0.85, d: 0.85 },
-    { id: 'chairR', type: 'chair', x: 5.1, z: 0.2, rot: -0.6, w: 0.85, d: 0.85 },
-    { id: 'shelf', type: 'shelf', x: -6.3, z: -2.6, rot: 0, w: 0.5, d: 2.4 },
-    { id: 'plantA', type: 'plant', x: 6.0, z: -2.8, rot: 0, w: 0.8, d: 0.8 },
-    { id: 'plantB', type: 'plant', x: -6.0, z: 3.6, rot: 0, w: 0.8, d: 0.8 },
-    { id: 'standA', type: 'speaker', x: -5.9, z: -4.2, rot: 0.4, w: 0.5, d: 0.5 },
-    { id: 'standB', type: 'speaker', x: 5.9, z: -4.2, rot: -0.4, w: 0.5, d: 0.5 }
+    // ── TV 앞 자리
+    { id: 'sofaL', type: 'sofa', x: -4.4, z: 0.6, rot: 0, w: 3.2, d: 1.15 },
+    { id: 'sofaR', type: 'sofa', x: 4.4, z: 0.6, rot: 0, w: 3.2, d: 1.15 },
+    { id: 'sofaC', type: 'sofa', x: 0, z: 2.1, rot: 0, w: 4.0, d: 1.15 },
+    { id: 'table', type: 'table', x: 0, z: -0.4, rot: 0, w: 2.6, d: 1.2 },
+    { id: 'chairL', type: 'chair', x: -8.2, z: -0.4, rot: 0.7, w: 0.95, d: 0.95 },
+    { id: 'chairR', type: 'chair', x: 8.2, z: -0.4, rot: -0.7, w: 0.95, d: 0.95 },
+
+    // ── 뒤쪽 라운지
+    { id: 'sofaB1', type: 'sofa', x: -5.5, z: 5.4, rot: 0, w: 3.2, d: 1.15 },
+    { id: 'sofaB2', type: 'sofa', x: 5.5, z: 5.4, rot: 0, w: 3.2, d: 1.15 },
+    { id: 'table2', type: 'table', x: 0, z: 5.4, rot: 0, w: 2.2, d: 1.1 },
+    { id: 'chairB1', type: 'chair', x: -2.4, z: 5.6, rot: 2.5, w: 0.95, d: 0.95 },
+    { id: 'chairB2', type: 'chair', x: 2.4, z: 5.6, rot: -2.5, w: 0.95, d: 0.95 },
+
+    // ── 가장자리
+    { id: 'shelf1', type: 'shelf', x: -10.6, z: -3.5, rot: 0, w: 0.55, d: 3.2 },
+    { id: 'shelf2', type: 'shelf', x: -10.6, z: 3.5, rot: 0, w: 0.55, d: 3.2 },
+    { id: 'plantA', type: 'plant', x: 10.0, z: -6.6, rot: 0, w: 0.9, d: 0.9 },
+    { id: 'plantB', type: 'plant', x: -10.0, z: -6.6, rot: 0, w: 0.9, d: 0.9 },
+    { id: 'plantC', type: 'plant', x: 10.0, z: 6.6, rot: 0, w: 0.9, d: 0.9 },
+    { id: 'plantD', type: 'plant', x: -10.0, z: 6.6, rot: 0, w: 0.9, d: 0.9 },
+    { id: 'standA', type: 'speaker', x: -8.6, z: -7.2, rot: 0.35, w: 0.55, d: 0.55 },
+    { id: 'standB', type: 'speaker', x: 8.6, z: -7.2, rot: -0.35, w: 0.55, d: 0.55 }
   ];
 
   const lamps = [
-    { x: -5.9, z: -0.8, h: 1.45 },
-    { x: 5.9, z: -0.8, h: 1.45 },
-    { x: -2.2, z: 4.3, h: 1.2 },
-    { x: 2.2, z: 4.3, h: 1.2 }
+    { x: -9.6, z: -3.0, h: 1.5 },
+    { x: 9.6, z: -3.0, h: 1.5 },
+    { x: -9.6, z: 2.0, h: 1.5 },
+    { x: 9.6, z: 2.0, h: 1.5 },
+    { x: -3.2, z: 7.0, h: 1.3 },
+    { x: 3.2, z: 7.0, h: 1.3 }
   ];
 
-  const spawn = { x: 0, z: 2.3 };   // 소파들 사이, TV 를 마주 보는 자리
+  const spawn = { x: 0, z: 3.6 };   // 두 자리 사이, TV 를 마주 보는 통로
 
   /* ---- 충돌 (xz 평면의 사각형들) --------------------------------- */
   const solids = [];
@@ -126,7 +148,7 @@ const ROOM3D = (function () {
   const seats = [];
   furniture.forEach((f) => {
     if (f.type === 'sofa') {
-      const n = f.w > 2.7 ? 3 : 2;
+      const n = Math.max(2, Math.round(f.w / 0.95));
       for (let i = 0; i < n; i++) {
         const off = (i - (n - 1) / 2) * (f.w / n);
         seats.push({ x: f.x + off, z: f.z - 0.1, rot: f.rot });
@@ -140,7 +162,7 @@ const ROOM3D = (function () {
     W: W, D: D, H: H, WALL: WALL, BOUND: BOUND,
     placeOnWall: placeOnWall,
     TV: TV, BOARD: BOARD, plaques: plaques, frames: frames,
-    CARPET: CARPET, furniture: furniture, lamps: lamps, solids: solids,
+    CARPET: CARPET, CARPETS: CARPETS, furniture: furniture, lamps: lamps, solids: solids,
     seats: seats, spawn: spawn, collide: collide, moveVector: moveVector
   };
 })();
