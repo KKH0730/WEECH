@@ -75,15 +75,8 @@ input,textarea{font-family:inherit;}
   font-size:clamp(30px,6vw,42px);letter-spacing:.14em;
 }
 .lobby-head p{margin:0;font-size:13.5px;color:var(--dim);line-height:1.7;}
-/* WE + WATCH = WEECH — 이름의 뜻이 보이게 */
-.lobby-head .wordmark{
-  margin:4px 0 6px;
-  display:flex;align-items:center;justify-content:center;gap:10px;
-  font-size:13px;font-weight:700;letter-spacing:.2em;
-}
-.lobby-head .wordmark .w{ color:var(--accent); }
-.lobby-head .wordmark .op{ color:var(--faint);font-weight:400;font-size:14px; }
 .lobby-head .brand{
+  margin-top:2px;
   margin:0 0 18px;font-size:11px;letter-spacing:.54em;text-indent:.54em;
   color:rgba(255,184,77,.5);font-weight:700;
 }
