@@ -89,7 +89,7 @@ export function buildScene() {
   collidables.push(floor);
 
   /* ---------------- 벽 / 천장 ---------------- */
-  const wallMat = mat(0x2e2838, 0.95);
+  const wallMat = mat(0x262031, 0.95);
   const wallDefs = [
     { w: R.W, x: 0, y: R.H / 2, z: -R.D / 2, ry: 0 },             // 북 (TV)
     { w: R.W, x: 0, y: R.H / 2, z: R.D / 2, ry: Math.PI },        // 남
@@ -105,7 +105,7 @@ export function buildScene() {
     collidables.push(m);
   });
 
-  const ceil = new THREE.Mesh(new THREE.PlaneGeometry(R.W, R.D), mat(0x2c2636, 0.95));
+  const ceil = new THREE.Mesh(new THREE.PlaneGeometry(R.W, R.D), mat(0x241f2d, 0.95));
   ceil.rotation.x = Math.PI / 2;
   ceil.position.y = R.H;
   scene.add(ceil);
@@ -171,7 +171,7 @@ export function buildScene() {
   api.tvHole = hole;
 
   // 화면이 뿜는 빛
-  const tvLight = new THREE.PointLight(0x88aaff, 6, 12, 2);
+  const tvLight = new THREE.PointLight(0x88aaff, R.LIGHT.tv, 14, 2);
   tvLight.position.set(tvAt.x + tvAt.nx * 1.2, tvAt.y, tvAt.z + tvAt.nz * 1.2);
   scene.add(tvLight);
   api.tvLight = tvLight;
@@ -195,7 +195,7 @@ export function buildScene() {
   scene.add(boardGrp);
   collidables.push(board);
   // 전광판이 뿜는 푸른빛
-  const boardLight = new THREE.PointLight(0x6ec8ff, 2.2, 6, 2);
+  const boardLight = new THREE.PointLight(0x6ec8ff, R.LIGHT.board, 7, 2);
   boardLight.position.set(bAt.x + bAt.nx * 0.8, bAt.y, bAt.z + bAt.nz * 0.8);
   scene.add(boardLight);
   api.boardCanvas = boardRes.canvas;
@@ -346,7 +346,7 @@ export function buildScene() {
 
   /* ---------------- 천장 코브 조명 ---------------- */
   const C = R.COVE;
-  const coveMat = new THREE.MeshBasicMaterial({ color: 0xffe6c4 });
+  const coveMat = new THREE.MeshBasicMaterial({ color: 0xcdb896 });
   const coveLipMat = mat(0x241f2c, 0.9);
   const ci = C.inset;
   [
@@ -362,7 +362,7 @@ export function buildScene() {
   });
 
   R.CEIL_LIGHTS.forEach((p) => {
-    const l = new THREE.PointLight(0xfff0dc, 70, 30, 2);   // 천장이 높아진 만큼 세게
+    const l = new THREE.PointLight(0xffe9d0, R.LIGHT.ceil, 30, 2);
     l.position.set(p.x, C.y + 0.18, p.z);
     scene.add(l);
     api.lampLights.push(l);
@@ -370,7 +370,7 @@ export function buildScene() {
 
   /* ---------------- 하단 간접 조명 (영화관 통로등) ---------------- */
   const S = R.STRIP;
-  const stripMat = new THREE.MeshBasicMaterial({ color: 0xffb066 });
+  const stripMat = new THREE.MeshBasicMaterial({ color: 0xd98d4e });
   const si = S.inset;
   [
     { w: R.W - 0.3, d: 0.05, x: 0, z: -R.D / 2 + si },
@@ -384,7 +384,7 @@ export function buildScene() {
   });
 
   R.FLOOR_LIGHTS.forEach((p) => {
-    const l = new THREE.PointLight(0xff9e52, 7, 10, 2);
+    const l = new THREE.PointLight(0xff9e52, R.LIGHT.floor, 10, 2);
     l.position.set(p.x, S.y + 0.1, p.z);
     scene.add(l);
     api.lampLights.push(l);
@@ -466,13 +466,15 @@ export function buildScene() {
   api.beam = beam;
 
   /* ---------------- 조명 ---------------- */
-  scene.add(new THREE.AmbientLight(0x3f3a52, 0.75));   // 간접 조명이 주광이므로 환경광은 낮춘다
-  const hemi = new THREE.HemisphereLight(0x7a7aa4, 0x4a3a30, 0.45);
+  scene.add(new THREE.AmbientLight(0x322e42, R.LIGHT.ambient));
+  const hemi = new THREE.HemisphereLight(0x5e5e82, 0x3a2d26, R.LIGHT.hemi);
   scene.add(hemi);
 
   api.update = function (t, tvOn) {
     // TV 가 켜져 있으면 화면빛이 미세하게 일렁인다
-    const target = tvOn ? 6 + Math.sin(t * 2.3) * 1.2 + Math.sin(t * 7.1) * 0.5 : 0.6;
+    const target = tvOn
+      ? R.LIGHT.tv + Math.sin(t * 2.3) * 1.2 + Math.sin(t * 7.1) * 0.5
+      : 0.5;
     api.tvLight.intensity += (target - api.tvLight.intensity) * 0.08;
 
     // 영사기 빔은 재생 중에만, 밝기도 함께 일렁인다

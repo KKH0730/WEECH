@@ -24,7 +24,7 @@ renderer.setClearColor(0x000000, 0);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.15;
+renderer.toneMappingExposure = R.LIGHT.exposure;
 webglHost.appendChild(renderer.domElement);
 
 const cssRenderer = new CSS3DRenderer();

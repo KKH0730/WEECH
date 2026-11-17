@@ -110,6 +110,18 @@ const ROOM3D = (function () {
   /* 뒷쪽 중앙 천장에 매단 영사기. 여기서 화면 쪽으로 빔이 뻗는다. */
   const PROJECTOR = { x: 0, y: 4.6, z: D / 2 - 1.2, w: 0.52, h: 0.28, d: 0.66 };
 
+  /* 밝기 — 여기 숫자만 바꾸면 방 전체 분위기가 바뀐다.
+   *  영화관처럼 어둑하게 두고, 화면이 가장 밝은 것이 되도록 맞췄다. */
+  const LIGHT = {
+    exposure: 1.0,      // 전체 노출 (낮출수록 어둡다)
+    ambient: 0.52,      // 환경광 — 그늘이 완전히 까맣지 않을 정도만
+    hemi: 0.32,         // 위아래 색조
+    ceil: 46,           // 천장 코브
+    floor: 6.5,         // 하단 간접 (영화관 통로등)
+    tv: 6.5,            // 화면이 뿜는 빛 — 방에서 가장 밝은 것
+    board: 1.9          // 전광판
+  };
+
   const COVE = { inset: 0.75, y: H - 0.3, w: 0.14 };       // 천장 코브 띠
   const STRIP = { y: 0.1, h: 0.055, inset: 0.05 };          // 하단 간접 스트립
 
@@ -227,6 +239,7 @@ const ROOM3D = (function () {
     placeOnWall: placeOnWall,
     TV: TV, BOARD: BOARD, plaques: plaques, frames: frames,
     CARPET: CARPET, CARPETS: CARPETS, furniture: furniture, lamps: lamps, solids: solids,
+    LIGHT: LIGHT,
     COVE: COVE, STRIP: STRIP, CEIL_LIGHTS: CEIL_LIGHTS, FLOOR_LIGHTS: FLOOR_LIGHTS,
     PROJECTOR: PROJECTOR,
     seats: seats, spawn: spawn, collide: collide, moveVector: moveVector,
