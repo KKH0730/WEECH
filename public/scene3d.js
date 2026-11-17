@@ -55,7 +55,7 @@ function blob(radius, opacity) {
 export function buildScene() {
   const scene = new THREE.Scene();
   scene.background = null;
-  scene.fog = new THREE.Fog(0x14121a, 26, 60);   // 방이 넓어져 안개를 멀리 민다
+  scene.fog = new THREE.Fog(0x14121a, 32, 72);   // 넓고 높은 방 — 안개를 더 멀리
 
   const collidables = [];     // 화살이 꽂힐 수 있는 것들
   const api = { scene: scene, collidables: collidables, lampLights: [], tvLight: null };
@@ -177,7 +177,7 @@ export function buildScene() {
   api.tvLight = tvLight;
 
   /* ---------------- 재생목록 전광판 (오른쪽 벽) ---------------- */
-  const boardRes = canvasTex(THREE, 768, 508, (g, w, h) => {
+  const boardRes = canvasTex(THREE, 560, 990, (g, w, h) => {
     g.fillStyle = '#0b0d12'; g.fillRect(0, 0, w, h);
   });
   const bAt = onWall(R.BOARD, 0);
@@ -362,7 +362,7 @@ export function buildScene() {
   });
 
   R.CEIL_LIGHTS.forEach((p) => {
-    const l = new THREE.PointLight(0xfff0dc, 22, 18, 2);
+    const l = new THREE.PointLight(0xfff0dc, 70, 30, 2);   // 천장이 높아진 만큼 세게
     l.position.set(p.x, C.y + 0.18, p.z);
     scene.add(l);
     api.lampLights.push(l);
@@ -384,11 +384,86 @@ export function buildScene() {
   });
 
   R.FLOOR_LIGHTS.forEach((p) => {
-    const l = new THREE.PointLight(0xff9e52, 6, 9, 2);
+    const l = new THREE.PointLight(0xff9e52, 7, 10, 2);
     l.position.set(p.x, S.y + 0.1, p.z);
     scene.add(l);
     api.lampLights.push(l);
   });
+
+  /* ---------------- 영사기 (뒷쪽 중앙 천장) ---------------- */
+  const PJ = R.PROJECTOR;
+  const lensZ = PJ.z - PJ.d / 2 - 0.04;                  // 렌즈가 나온 자리
+  const screenY = tvAt.y, screenZ = tvAt.z;
+
+  const projGrp = new THREE.Group();
+  projGrp.position.set(PJ.x, PJ.y, PJ.z);
+  // 화면 쪽으로 살짝 숙인다
+  projGrp.rotation.x = -Math.atan2(PJ.y - screenY, PJ.z - screenZ);
+
+  const metal = mat(0x262430, 0.45, 0.5);
+  projGrp.add(box(PJ.w, PJ.h, PJ.d, metal, 0, 0, 0));
+  projGrp.add(box(PJ.w * 0.72, 0.04, PJ.d * 0.5, mat(0x15141a, 0.6), 0, PJ.h / 2 + 0.02, 0));
+  // 방열구
+  for (let i = 0; i < 4; i++) {
+    projGrp.add(box(0.02, PJ.h * 0.5, PJ.d * 0.6, mat(0x101017, 0.7), PJ.w / 2 + 0.005, 0, -0.02 + i * 0.0));
+  }
+  // 렌즈
+  const lensRing = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.095, 0.095, 0.09, 18),
+    mat(0x1a1920, 0.4, 0.6)
+  );
+  lensRing.rotation.x = Math.PI / 2;
+  lensRing.position.z = -PJ.d / 2 - 0.03;
+  projGrp.add(lensRing);
+  const lensGlass = new THREE.Mesh(
+    new THREE.CircleGeometry(0.07, 18),
+    new THREE.MeshBasicMaterial({ color: 0xbfd8ff })
+  );
+  lensGlass.position.z = -PJ.d / 2 - 0.08;
+  lensGlass.rotation.y = Math.PI;
+  projGrp.add(lensGlass);
+  api.projectorLens = lensGlass;
+
+  // 천장에 매단 봉
+  const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, R.H - PJ.y - PJ.h / 2, 10), metal);
+  rod.position.set(PJ.x, (R.H + PJ.y + PJ.h / 2) / 2, PJ.z);
+  scene.add(rod);
+  scene.add(box(0.26, 0.04, 0.26, metal, PJ.x, R.H - 0.02, PJ.z));
+  scene.add(projGrp);
+  projGrp.traverse((o) => { if (o.isMesh) collidables.push(o); });
+
+  /* 빔 — 렌즈에서 화면까지 퍼지는 빛기둥 */
+  const beam = (function () {
+    const nw = 0.1, nh = 0.06;                           // 렌즈 쪽
+    const fw = R.TV.w / 2, fh = R.TV.h / 2;              // 화면 쪽
+    const near = [
+      [PJ.x - nw, PJ.y + nh, lensZ], [PJ.x + nw, PJ.y + nh, lensZ],
+      [PJ.x + nw, PJ.y - nh, lensZ], [PJ.x - nw, PJ.y - nh, lensZ]
+    ];
+    const far = [
+      [tvAt.x - fw, screenY + fh, screenZ + 0.02], [tvAt.x + fw, screenY + fh, screenZ + 0.02],
+      [tvAt.x + fw, screenY - fh, screenZ + 0.02], [tvAt.x - fw, screenY - fh, screenZ + 0.02]
+    ];
+    const pos = [], col = [];
+    const pushV = (p, c) => { pos.push(p[0], p[1], p[2]); col.push(c[0], c[1], c[2]); };
+    const NEAR_C = [0.85, 0.92, 1.0], FAR_C = [0.12, 0.16, 0.26];
+    for (let i = 0; i < 4; i++) {
+      const j = (i + 1) % 4;
+      pushV(near[i], NEAR_C); pushV(far[i], FAR_C); pushV(far[j], FAR_C);
+      pushV(near[i], NEAR_C); pushV(far[j], FAR_C); pushV(near[j], NEAR_C);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({
+      vertexColors: true, transparent: true, opacity: 0.075,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
+    }));
+    m.renderOrder = 2;
+    scene.add(m);
+    return m;
+  })();
+  api.beam = beam;
 
   /* ---------------- 조명 ---------------- */
   scene.add(new THREE.AmbientLight(0x3f3a52, 0.75));   // 간접 조명이 주광이므로 환경광은 낮춘다
@@ -399,6 +474,17 @@ export function buildScene() {
     // TV 가 켜져 있으면 화면빛이 미세하게 일렁인다
     const target = tvOn ? 6 + Math.sin(t * 2.3) * 1.2 + Math.sin(t * 7.1) * 0.5 : 0.6;
     api.tvLight.intensity += (target - api.tvLight.intensity) * 0.08;
+
+    // 영사기 빔은 재생 중에만, 밝기도 함께 일렁인다
+    if (api.beam) {
+      api.beam.visible = tvOn;
+      if (tvOn) {
+        api.beam.material.opacity = 0.062 + Math.sin(t * 2.3) * 0.012 + Math.sin(t * 9.7) * 0.006;
+      }
+    }
+    if (api.projectorLens) {
+      api.projectorLens.material.color.setScalar(tvOn ? 0.75 + Math.sin(t * 7.1) * 0.12 : 0.1);
+    }
   };
 
   return api;

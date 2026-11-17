@@ -12,7 +12,7 @@
 
 const ROOM3D = (function () {
 
-  const W = 22, D = 16, H = 4.4;
+  const W = 22, D = 16, H = 8.8;        // 천장을 두 배로 — 영화관처럼 높은 공간
   const WALL = { x0: -W / 2, x1: W / 2, z0: -D / 2, z1: D / 2 };
   const BOUND = { x0: -10.45, x1: 10.45, z0: -7.45, z1: 7.45 };   // 사람이 걸을 수 있는 범위
 
@@ -39,8 +39,9 @@ const ROOM3D = (function () {
   const PLATE_DEPTH = 0.05;    // 버튼 받침 두께
   const FACE_Z = 0.055;        // 평면이 놓이는 위치 (상자 앞면 0.03 보다 2.5cm 앞)
 
-  const TV = { w: 6.0, h: 3.375, wall: 'north', u: 0, y: 2.4 };      // 16:9 — 정면 벽
-  const BOARD = { w: 3.2, h: 2.12, wall: 'right', u: 0.4, y: 2.1 };   // 재생목록 — 오른쪽 벽
+  const TV = { w: 9.0, h: 5.0625, wall: 'north', u: 0, y: 3.8 };     // 16:9 — 정면 벽 가득
+  //  스크린 바로 오른쪽, 같은 정면 벽에 세로로 길게 세운다.
+  const BOARD = { w: 2.6, h: 4.6, wall: 'north', u: 7.2, y: 4.0 };    // 재생목록 — 스크린 오른쪽
 
   // 실버 · 골드 버튼 — 왼쪽 벽
   const plaques = [
@@ -58,7 +59,12 @@ const ROOM3D = (function () {
     { wall: 'left', u: 0.0, y: 1.0, w: 0.9, h: 0.64, hue: 45 },
     { wall: 'left', u: 2.1, y: 1.9, w: 0.84, h: 1.16, hue: 95 },
     { wall: 'left', u: 3.9, y: 1.7, w: 1.16, h: 0.84, hue: 255 },
-    { wall: 'left', u: 5.9, y: 1.9, w: 0.96, h: 1.3, hue: 15 }
+    { wall: 'left', u: 5.9, y: 1.9, w: 0.96, h: 1.3, hue: 15 },
+    // 높은 천장 — 위쪽에도 큰 그림을 건다
+    { wall: 'left', u: -4.5, y: 4.6, w: 2.0, h: 1.4, hue: 200 },
+    { wall: 'left', u: -1.2, y: 4.6, w: 1.4, h: 1.9, hue: 30 },
+    { wall: 'left', u: 1.9, y: 4.7, w: 1.8, h: 1.25, hue: 300 },
+    { wall: 'left', u: 4.9, y: 4.6, w: 1.5, h: 2.0, hue: 170 }
   ];
 
   /* ---- 바닥에 놓인 것들 ------------------------------------------ */
@@ -101,6 +107,9 @@ const ROOM3D = (function () {
    *    천장 코브 : 벽에서 COVE.inset 만큼 들어온 자리에 띠를 두르고 천장을 비춘다
    *    하단 스트립 : 영화관 통로등처럼 벽 아래를 따라 낮고 따뜻하게 깔린다
    * ------------------------------------------------------------------ */
+  /* 뒷쪽 중앙 천장에 매단 영사기. 여기서 화면 쪽으로 빔이 뻗는다. */
+  const PROJECTOR = { x: 0, y: 4.6, z: D / 2 - 1.2, w: 0.52, h: 0.28, d: 0.66 };
+
   const COVE = { inset: 0.75, y: H - 0.3, w: 0.14 };       // 천장 코브 띠
   const STRIP = { y: 0.1, h: 0.055, inset: 0.05 };          // 하단 간접 스트립
 
@@ -219,6 +228,7 @@ const ROOM3D = (function () {
     TV: TV, BOARD: BOARD, plaques: plaques, frames: frames,
     CARPET: CARPET, CARPETS: CARPETS, furniture: furniture, lamps: lamps, solids: solids,
     COVE: COVE, STRIP: STRIP, CEIL_LIGHTS: CEIL_LIGHTS, FLOOR_LIGHTS: FLOOR_LIGHTS,
+    PROJECTOR: PROJECTOR,
     seats: seats, spawn: spawn, collide: collide, moveVector: moveVector,
     groundAt: groundAt, TOP: TOP, STEP: STEP,
     BOX_DEPTH: BOX_DEPTH, PLATE_DEPTH: PLATE_DEPTH, FACE_Z: FACE_Z

@@ -574,41 +574,47 @@ function drawBoard() {
   g.textAlign = 'left';
   g.font = 'bold 34px "Noto Sans KR",sans-serif';
   g.fillStyle = '#7fd4ff';
-  g.fillText('▶  재생목록', 32, 62);
-  g.font = '26px "Noto Sans KR",sans-serif';
+  g.fillText('▶  재생목록', 28, 60);
+  g.font = '24px "Noto Sans KR",sans-serif';
   g.fillStyle = 'rgba(127,212,255,.6)';
-  g.fillText(list.length + '곡', W - 110, 62);
+  g.fillText(list.length + '곡', W - 96, 60);
 
   g.fillStyle = 'rgba(110,200,255,.25)';
-  g.fillRect(28, 80, W - 56, 2);
+  g.fillRect(24, 78, W - 48, 2);
 
   const cur = room ? room.idx : 0;
-  const rows = 7;
-  const start = Math.max(0, Math.min(Math.max(0, list.length - rows), cur - 2));
-  g.font = '25px "Noto Sans KR",sans-serif';
+  const rows = 15;                       // 세로로 길어져 더 많이 보인다
+  const rowH = 58;
+  const start = Math.max(0, Math.min(Math.max(0, list.length - rows), cur - 4));
+  g.font = '23px "Noto Sans KR",sans-serif';
   for (let i = 0; i < rows; i++) {
     const n = start + i;
     if (n >= list.length) break;
     const it = list[n];
-    const y = 126 + i * 52;
+    const y = 126 + i * rowH;
     const on = n === cur;
     if (on) {
       g.fillStyle = 'rgba(110,200,255,.16)';
-      g.beginPath(); g.roundRect(24, y - 32, W - 48, 44, 8); g.fill();
+      g.beginPath(); g.roundRect(20, y - 34, W - 40, 48, 8); g.fill();
     }
     g.fillStyle = on ? '#b9e6ff' : 'rgba(170,195,215,.5)';
-    g.fillText(fit(g, (n + 1) + '. ' + (it.title || it.id), W - 130), 40, y);
+    g.fillText(fit(g, (n + 1) + '. ' + (it.title || it.id), W - 112), 34, y);
     if (on && room && room.playing) {
       for (let k = 0; k < 3; k++) {
         const bh = 8 + Math.abs(Math.sin(boardAnim * 4 + k)) * 16;
-        g.fillRect(W - 86 + k * 11, y - bh + 4, 7, bh);
+        g.fillRect(W - 74 + k * 11, y - bh + 4, 7, bh);
       }
     }
   }
+  if (list.length > start + rows) {
+    g.fillStyle = 'rgba(127,212,255,.45)';
+    g.font = '21px "Noto Sans KR",sans-serif';
+    g.fillText('⋯ 외 ' + (list.length - start - rows) + '곡', 34, 126 + rows * rowH + 6);
+  }
   if (!list.length) {
     g.fillStyle = 'rgba(170,195,215,.4)';
-    g.font = '25px "Noto Sans KR",sans-serif';
-    g.fillText('비어 있습니다', 40, 140);
+    g.font = '24px "Noto Sans KR",sans-serif';
+    g.fillText('비어 있습니다', 34, 140);
   }
   world.boardTexture.needsUpdate = true;
 }
