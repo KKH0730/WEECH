@@ -871,6 +871,10 @@ function setWatchMode(on) {
   }
 }
 $('watchBtn').addEventListener('click', () => setWatchMode(cam.mode !== 'watch'));
+
+/* 터치 기기용 — 키보드가 없는 환경에서 점프와 화살 */
+$('touchJump').addEventListener('click', (e) => { e.preventDefault(); jump(); });
+$('touchArrow').addEventListener('click', (e) => { e.preventDefault(); shootForward(); });
 $('helpBtn').addEventListener('click', () => { $('helpModal').hidden = false; });
 
 /* ------------------------------------------------------------------ */

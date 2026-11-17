@@ -19,6 +19,7 @@
 
 html,body{
   margin:0;padding:0;height:100%;
+  overscroll-behavior:none;touch-action:manipulation;
   background:var(--bg);color:var(--ink);
   font-family:'Noto Sans KR','Pretendard','Malgun Gothic',sans-serif;
   overflow:hidden;-webkit-font-smoothing:antialiased;
@@ -40,7 +41,10 @@ input,textarea{font-family:inherit;}
 }
 #css3d * { pointer-events: none !important; }
 #webgl { z-index: 2; }
-#webgl canvas { display: block; width: 100%; height: 100%; }
+#webgl canvas {
+  display: block; width: 100%; height: 100%;
+  touch-action: none;        /* 터치 드래그를 브라우저가 가로채지 않게 */
+}
 
 #unmuteBtn{
   position:fixed;z-index:12;left:50%;bottom:92px;transform:translateX(-50%);
@@ -362,4 +366,32 @@ body.watching #chatlog{opacity:.6;}
 @media (max-width:720px){
   #people{width:170px;top:104px;}
   .room-id strong{max-width:40vw;}
+}
+
+/* ───────────── 터치 기기 전용 버튼 ─────────────
+   마우스가 있는 기기에서는 숨긴다. 폰에는 키보드가 없어
+   점프와 화살 발사를 손으로 할 수 있어야 한다. */
+
+#touchPad{ display:none; }
+
+@media (hover: none) and (pointer: coarse) {
+  #touchPad{
+    display:flex;flex-direction:column;gap:10px;
+    position:absolute;right:16px;bottom:74px;
+  }
+  #touchPad button{
+    width:56px;height:56px;border-radius:50%;
+    background:var(--glass);border:1px solid var(--line);
+    color:var(--ink);font-size:21px;line-height:1;
+    backdrop-filter:blur(10px);
+    display:flex;align-items:center;justify-content:center;
+  }
+  #touchPad button:active{ background:rgba(255,184,77,.3);border-color:var(--accent); }
+
+  /* 폰에서는 좁으니 UI 를 조금 줄인다 */
+  #people{ top:96px; }
+  #chatlog{ bottom:74px;width:56vw; }
+  #chatbar{ width:min(420px,78vw);bottom:12px;left:34%; }
+  #playerbar{ padding:6px 10px; }
+  #keyhint{ display:none; }
 }
