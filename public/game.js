@@ -92,15 +92,58 @@ function toast(msg, ms) {
   toastTimer = setTimeout(() => { el.hidden = true; }, ms || 2600);
 }
 
+/* 채팅은 서버에 저장하지 않는다. 이 패널이 들고 있는 동안만 남는다. */
+const CHAT_KEEP = 200;          // 메모리에 쌓아 둘 최대 줄 수
+let chatMin = false;            // 접힘 여부 — 기본은 펼침
+let chatUnread = 0;
+
+function nowHM() {
+  const d = new Date();
+  return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+}
+
+function atBottom(el) {
+  return el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+}
+
 function logMsg(html, cls) {
   const log = $('chatlog');
+  const stick = atBottom(log);       // 올려서 읽는 중이면 끌어내리지 않는다
   const d = document.createElement('div');
   d.className = 'msg' + (cls ? ' ' + cls : '');
   d.innerHTML = html;
   log.appendChild(d);
-  while (log.children.length > 9) log.removeChild(log.firstChild);
-  setTimeout(() => d.classList.add('fade'), 9000);
+  while (log.children.length > CHAT_KEEP) log.removeChild(log.firstChild);
+  if (stick) log.scrollTop = log.scrollHeight;
+  if (chatMin || !stick) bumpUnread();
 }
+
+function bumpUnread() {
+  chatUnread++;
+  const el = $('chatUnread');
+  el.textContent = chatUnread > 99 ? '99+' : chatUnread;
+  el.hidden = false;
+}
+
+function clearUnread() {
+  chatUnread = 0;
+  $('chatUnread').hidden = true;
+}
+
+function setChatMin(min) {
+  chatMin = min;
+  $('chat').classList.toggle('min', min);
+  if (!min) {
+    const log = $('chatlog');
+    log.scrollTop = log.scrollHeight;
+    clearUnread();
+  }
+}
+
+$('chatHead').addEventListener('click', () => setChatMin(!chatMin));
+$('chatlog').addEventListener('scroll', () => {
+  if (!chatMin && atBottom($('chatlog'))) clearUnread();
+});
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -305,7 +348,8 @@ function connect() {
         const g = others.get(m.id);
         const av = m.id === myId ? myAvatar : (g ? g.av : null);
         if (av) av.say(m.txt);
-        logMsg('<b>' + esc(m.name) + '</b>' + esc(m.txt));
+        logMsg('<b>' + esc(m.name) + '</b>' + esc(m.txt) +
+          '<span class="tm">' + nowHM() + '</span>', m.id === myId ? 'me' : '');
         break;
       }
 
@@ -408,6 +452,8 @@ function leaveToLobby() {
   $('hud').hidden = true;
   $('lobby').hidden = false;
   $('chatlog').innerHTML = '';
+  clearUnread();
+  setChatMin(false);
   cssHost.style.display = 'none';
   setWatchMode(false);
   renderRooms();
@@ -637,7 +683,7 @@ let typing = false;
 const drag = { on: false, moved: 0, lx: 0, ly: 0, t0: 0, button: 0 };
 
 const chatInput = $('chatInput');
-chatInput.addEventListener('focus', () => { typing = true; });
+chatInput.addEventListener('focus', () => { typing = true; clearUnread(); });
 chatInput.addEventListener('blur', () => { typing = false; });
 chatInput.addEventListener('keydown', (e) => {
   e.stopPropagation();
@@ -659,7 +705,12 @@ window.addEventListener('keydown', (e) => {
     } else if (cam.mode === 'watch') setWatchMode(false);
     return;
   }
-  if (e.key === 'Enter') { chatInput.focus(); e.preventDefault(); return; }
+  if (e.key === 'Enter') {
+    if (chatMin) setChatMin(false);
+    chatInput.focus();
+    e.preventDefault();
+    return;
+  }
   if (e.key === '?' || e.key === '/') { $('helpModal').hidden = false; e.preventDefault(); return; }
   if (e.key === ' ') { jump(); e.preventDefault(); return; }
   const k = e.key.toLowerCase();

@@ -197,33 +197,10 @@ input,textarea{font-family:inherit;}
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
 
-#chatlog{
-  position:absolute;left:16px;bottom:64px;width:min(330px,42vw);
-  display:flex;flex-direction:column;gap:5px;justify-content:flex-end;
-  max-height:40vh;overflow:hidden;
-}
-.msg{
-  font-size:13px;line-height:1.5;padding:6px 11px;border-radius:10px;
-  background:rgba(14,12,18,.72);backdrop-filter:blur(6px);
-  animation:rise .3s ease both;width:fit-content;max-width:100%;
-  word-break:break-word;transition:opacity .8s;
-}
-.msg b{color:var(--accent);font-weight:700;margin-right:6px;}
-.msg.sys{color:var(--faint);font-size:12px;background:transparent;padding:4px 6px;}
-.msg.fade{opacity:.25;}
 
-#chatbar{
-  position:absolute;left:50%;bottom:16px;transform:translateX(-50%);
-  width:min(520px,86vw);
-}
-#chatInput{
-  width:100%;padding:11px 16px;border-radius:999px;
-  background:var(--glass);border:1px solid var(--line);
-  color:var(--ink);font-size:14px;outline:none;
-  backdrop-filter:blur(10px);transition:.2s;
-}
-#chatInput:focus{border-color:var(--accent);background:rgba(28,24,34,.92);}
-#chatInput::placeholder{color:var(--faint);}
+
+
+
 
 #toast{
   position:absolute;left:50%;top:64px;transform:translateX(-50%);
@@ -275,7 +252,7 @@ kbd{
 @keyframes pop{from{opacity:0;transform:translateX(-50%) scale(.94)}to{opacity:1;transform:translateX(-50%) scale(1)}}
 
 @media (max-width:720px){
-  #chatlog{width:52vw;left:10px;bottom:58px;}
+  #chat{width:62vw;}
   .room-id strong{max-width:30vw;}
   #nowPlaying{display:none;}
   #playerbar{padding:6px 10px;}
@@ -297,7 +274,7 @@ body.watching::after{
 }
 body.watching #topbar{opacity:.45;transition:opacity .4s;}
 body.watching #topbar:hover{opacity:1;}
-body.watching #chatlog{opacity:.6;}
+body.watching #chat{opacity:.72;}
 
 /* ───────────── 좌상단 방 정보 ───────────── */
 
@@ -382,7 +359,7 @@ body.watching #chatlog{opacity:.6;}
 @media (hover: none) and (pointer: coarse) {
   #touchPad{
     display:flex;flex-direction:column;gap:10px;
-    position:absolute;right:16px;bottom:74px;
+    position:absolute;left:16px;bottom:16px;
   }
   #touchPad button{
     width:56px;height:56px;border-radius:50%;
@@ -395,8 +372,78 @@ body.watching #chatlog{opacity:.6;}
 
   /* 폰에서는 좁으니 UI 를 조금 줄인다 */
   #people{ top:96px; }
-  #chatlog{ bottom:74px;width:56vw; }
-  #chatbar{ width:min(420px,78vw);bottom:12px;left:34%; }
+  #chat{ width:min(300px,64vw);bottom:12px;right:12px; }
+  #chatlog{ height:150px; }
   #playerbar{ padding:6px 10px; }
   #keyhint{ display:none; }
 }
+
+/* ───────────── 채팅 패널 (우측 하단) ─────────────
+   반투명 고정 패널. 내용은 남고, 접었다 펼 수 있으며
+   본문은 높이를 고정해 스크롤한다. 저장은 하지 않는다. */
+
+#chat{
+  position:absolute;right:16px;bottom:16px;
+  width:min(336px,40vw);
+  pointer-events:auto;
+  display:flex;flex-direction:column;
+  border-radius:13px;overflow:hidden;
+  background:rgba(16,14,22,.58);
+  border:1px solid var(--line);
+  backdrop-filter:blur(14px);
+  box-shadow:0 12px 40px rgba(0,0,0,.35);
+}
+
+#chatHead{
+  display:flex;align-items:center;gap:8px;
+  padding:9px 12px;border:0;background:transparent;
+  color:var(--ink);font-size:12.5px;font-weight:500;
+  border-bottom:1px solid var(--line);
+}
+#chatHead .ic{font-size:13px;}
+#chatHead .t{flex:1;text-align:left;}
+#chatHead .min{color:var(--dim);font-size:14px;line-height:1;width:14px;}
+#chatHead:hover{background:rgba(255,255,255,.04);}
+#chatHead .unread{
+  min-width:18px;padding:1px 6px;border-radius:999px;
+  background:var(--accent);color:var(--accent-ink);
+  font-size:10.5px;font-weight:700;
+}
+#chatHead .unread[hidden]{display:none;}
+
+#chat.min{ background:rgba(16,14,22,.5); }
+#chat.min #chatHead{ border-bottom:0; }
+#chat.min #chatBody{ display:none; }
+#chat.min #chatHead .min::after{ content:'+'; }
+#chat.min #chatHead .min{ font-size:0; }
+#chat.min #chatHead .min::after{ font-size:14px; }
+
+#chatBody{display:flex;flex-direction:column;}
+
+#chatlog{
+  height:196px;                 /* 고정 높이 — 넘치면 스크롤 */
+  overflow-y:auto;overscroll-behavior:contain;
+  padding:9px 11px;
+  display:flex;flex-direction:column;gap:5px;
+}
+#chatlog::-webkit-scrollbar{width:6px;}
+#chatlog::-webkit-scrollbar-thumb{background:rgba(240,236,230,.18);border-radius:3px;}
+#chatlog::-webkit-scrollbar-track{background:transparent;}
+
+.msg{
+  font-size:12.8px;line-height:1.55;
+  word-break:break-word;animation:rise .2s ease both;
+}
+.msg b{color:var(--accent);font-weight:700;margin-right:5px;}
+.msg .tm{color:var(--faint);font-size:10.5px;margin-left:5px;}
+.msg.me b{color:#9fd8ff;}
+.msg.sys{color:var(--faint);font-size:11.5px;text-align:center;padding:2px 0;}
+
+#chatbar{padding:8px;border-top:1px solid var(--line);}
+#chatInput{
+  width:100%;padding:8px 12px;border-radius:8px;
+  background:rgba(255,255,255,.05);border:1px solid transparent;
+  color:var(--ink);font-size:13px;outline:none;transition:.15s;
+}
+#chatInput:focus{border-color:rgba(255,184,77,.5);background:rgba(255,255,255,.08);}
+#chatInput::placeholder{color:var(--faint);}

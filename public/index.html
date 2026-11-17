@@ -119,10 +119,19 @@
     <div id="peopleList" hidden></div>
   </div>
 
-  <div id="chatlog"></div>
-
-  <div id="chatbar">
-    <input id="chatInput" type="text" maxlength="120" placeholder="Enter 를 눌러 이야기하기" autocomplete="off" />
+  <div id="chat">
+    <button id="chatHead" title="접기 / 펼치기">
+      <span class="ic">💬</span>
+      <span class="t">채팅</span>
+      <span id="chatUnread" class="unread" hidden>0</span>
+      <span class="min">—</span>
+    </button>
+    <div id="chatBody">
+      <div id="chatlog"></div>
+      <div id="chatbar">
+        <input id="chatInput" type="text" maxlength="120" placeholder="메시지를 입력하세요 (Enter)" autocomplete="off" />
+      </div>
+    </div>
   </div>
 
   <div id="touchPad">
