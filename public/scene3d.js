@@ -188,10 +188,10 @@ export function buildScene() {
     new THREE.PlaneGeometry(R.BOARD.w, R.BOARD.h),
     new THREE.MeshBasicMaterial({ map: boardRes.tex })
   );
-  board.position.z = 0.03;
+  board.position.z = R.FACE_Z;       // 상자 앞면보다 앞 — Z-파이팅 방지
   board.name = 'board';
   boardGrp.add(board);
-  boardGrp.add(box(R.BOARD.w + 0.1, R.BOARD.h + 0.1, 0.06, mat(0x15131a, 0.7), 0, 0, 0));
+  boardGrp.add(box(R.BOARD.w + 0.1, R.BOARD.h + 0.1, R.BOX_DEPTH, mat(0x15131a, 0.7), 0, 0, 0));
   scene.add(boardGrp);
   collidables.push(board);
   // 전광판이 뿜는 푸른빛
@@ -227,10 +227,10 @@ export function buildScene() {
       new THREE.PlaneGeometry(p.s, p.s),
       new THREE.MeshStandardMaterial({ map: plate.tex, roughness: 0.4, metalness: 0.35 })
     );
-    m.position.z = 0.03;
+    m.position.z = R.FACE_Z;
     m.name = 'plaque';
     grp.add(m);
-    grp.add(box(p.s + 0.07, p.s + 0.07, 0.05, mat(0x0f0d13, 0.8), 0, 0, 0));
+    grp.add(box(p.s + 0.07, p.s + 0.07, R.PLATE_DEPTH, mat(0x0f0d13, 0.8), 0, 0, 0));
     scene.add(grp);
     collidables.push(m);
   });
@@ -257,8 +257,8 @@ export function buildScene() {
       new THREE.PlaneGeometry(f.w * 0.84, f.h * 0.84),
       new THREE.MeshStandardMaterial({ map: art.tex, roughness: 0.8 })
     );
-    pic.position.z = 0.035;
-    const frame = box(f.w, f.h, 0.06, mat(0x6a5540, 0.75), 0, 0, 0);
+    pic.position.z = R.FACE_Z;
+    const frame = box(f.w, f.h, R.BOX_DEPTH, mat(0x6a5540, 0.75), 0, 0, 0);
     const grp = new THREE.Group();
     grp.add(pic); grp.add(frame);
     grp.position.set(at.x, at.y, at.z);

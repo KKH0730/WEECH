@@ -1008,10 +1008,11 @@ function frame(now) {
     update(dt, now);
     world.update(now / 1000, !!(room && room.playing));
 
-    boardTick += dt;
-    if (boardTick > 0.12) {
-      boardTick = 0; boardAnim = now / 1000;
-      if (screen === 'room') drawBoard();
+    // 전광판은 재생 중일 때만 다시 그린다 (막대 애니메이션 때문)
+    // 멈춰 있으면 내용이 바뀔 때만 그리므로 텍스처를 매번 올리지 않는다
+    if (screen === 'room' && room && room.playing) {
+      boardTick += dt;
+      if (boardTick > 0.13) { boardTick = 0; boardAnim = now / 1000; drawBoard(); }
     }
 
     renderer.render(scene, camera);

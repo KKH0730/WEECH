@@ -31,6 +31,14 @@ const ROOM3D = (function () {
     return { x: W / 2 - WALL_INSET, y: item.y, z: item.u, ry: -Math.PI / 2 };
   }
 
+  /* 벽에 거는 물건의 두께.
+   *  평면(그림·화면)은 반드시 뒤 상자의 앞면보다 앞에 둬야 한다.
+   *  같은 평면에 놓으면 깊이 비교가 프레임마다 뒤집혀 화면이 깜빡인다(Z-파이팅).
+   *  FACE_Z > BOX_DEPTH / 2 를 지킬 것. */
+  const BOX_DEPTH = 0.06;      // 테두리 상자 두께
+  const PLATE_DEPTH = 0.05;    // 버튼 받침 두께
+  const FACE_Z = 0.055;        // 평면이 놓이는 위치 (상자 앞면 0.03 보다 2.5cm 앞)
+
   const TV = { w: 6.0, h: 3.375, wall: 'north', u: 0, y: 2.4 };      // 16:9 — 정면 벽
   const BOARD = { w: 3.2, h: 2.12, wall: 'right', u: 0.4, y: 2.1 };   // 재생목록 — 오른쪽 벽
 
@@ -200,7 +208,8 @@ const ROOM3D = (function () {
     TV: TV, BOARD: BOARD, plaques: plaques, frames: frames,
     CARPET: CARPET, CARPETS: CARPETS, furniture: furniture, lamps: lamps, solids: solids,
     seats: seats, spawn: spawn, collide: collide, moveVector: moveVector,
-    groundAt: groundAt, TOP: TOP, STEP: STEP
+    groundAt: groundAt, TOP: TOP, STEP: STEP,
+    BOX_DEPTH: BOX_DEPTH, PLATE_DEPTH: PLATE_DEPTH, FACE_Z: FACE_Z
   };
 })();
 
