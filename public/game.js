@@ -802,15 +802,28 @@ function makeDart(color) {
   return g;
 }
 
+const DART_AXIS = new THREE.Vector3(0, 0, 1);   // 화살촉이 바라보는 로컬 축
+
 function spawnDart(m) {
   const from = new THREE.Vector3(m.ox / 100, m.oy / 100, m.oz / 100);
   const to = new THREE.Vector3(m.hx / 100, m.hy / 100, m.hz / 100);
   const obj = makeDart(colorOf(m.id)[0]);
   obj.position.copy(from);
+
+  // 날아가는 방향으로 촉을 맞춘다.
+  //   lookAt 은 로컬 -z 를 대상으로 향하게 하는데 촉은 +z 에 있고,
+  //   도착한 순간에는 방향 벡터가 0 이 되어 엉뚱한 쪽을 보게 된다.
+  //   그래서 쏠 때 한 번만 계산해 고정한다.
+  const dir = to.clone().sub(from);
+  if (dir.lengthSq() < 1e-8) dir.set(0, 0, -1);
+  dir.normalize();
+  const quat = new THREE.Quaternion().setFromUnitVectors(DART_AXIS, dir);
+  obj.quaternion.copy(quat);
+
   scene.add(obj);
 
   const d = {
-    obj: obj, from: from, to: to,
+    obj: obj, from: from, to: to, quat: quat,
     dist: Math.max(0.001, from.distanceTo(to)),
     travel: 0, stuck: false, t: 0,
     pid: m.pid || 0, offset: null
@@ -830,7 +843,6 @@ function updateDarts(dt) {
       d.travel += DART_SPEED * dt;
       const k = Math.min(1, d.travel / d.dist);
       d.obj.position.lerpVectors(d.from, d.to, k);
-      d.obj.lookAt(d.to);
       if (k >= 1) { d.stuck = true; d.t = 0; }
     } else {
       d.t += dt;
@@ -838,7 +850,10 @@ function updateDarts(dt) {
         const g = d.pid === myId ? { x: me.x, z: me.z } : others.get(d.pid);
         if (g) d.obj.position.set(g.x + d.offset.x, d.offset.y, g.z + d.offset.z);
       }
-      d.obj.rotation.z = Math.sin(d.t * 22) * Math.max(0, 1 - d.t * 2.4) * 0.09;
+      // 꽂히고 잠깐 떤다 — 원래 방향 위에 얹어서 틀어지지 않게
+      const wob = Math.sin(d.t * 22) * Math.max(0, 1 - d.t * 2.4) * 0.09;
+      d.obj.quaternion.copy(d.quat);
+      d.obj.rotateX(wob);
       if (d.t > DART_LIFE) {
         const a = Math.max(0, 1 - (d.t - DART_LIFE) / DART_FADE);
         d.obj.traverse((o) => { if (o.isMesh) o.material.opacity = a; });
