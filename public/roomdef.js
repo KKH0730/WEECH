@@ -39,9 +39,9 @@ const ROOM3D = (function () {
   const PLATE_DEPTH = 0.05;    // 버튼 받침 두께
   const FACE_Z = 0.055;        // 평면이 놓이는 위치 (상자 앞면 0.03 보다 2.5cm 앞)
 
-  const TV = { w: 9.0, h: 5.0625, wall: 'north', u: 0, y: 3.8 };     // 16:9 — 정면 벽 가득
+  const TV = { w: 12.0, h: 6.75, wall: 'north', u: 0, y: 4.5 };      // 16:9 — 극장 스크린 크기
   //  스크린 바로 오른쪽, 같은 정면 벽에 세로로 길게 세운다.
-  const BOARD = { w: 2.6, h: 4.6, wall: 'north', u: 7.2, y: 4.0 };    // 재생목록 — 스크린 오른쪽
+  const BOARD = { w: 2.8, h: 6.0, wall: 'north', u: 8.1, y: 4.875 };  // 재생목록 — 스크린 오른쪽, 윗변 맞춤
 
   // 실버 · 골드 버튼 — 왼쪽 벽
   const plaques = [

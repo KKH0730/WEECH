@@ -177,7 +177,7 @@ export function buildScene() {
   api.tvLight = tvLight;
 
   /* ---------------- 재생목록 전광판 (오른쪽 벽) ---------------- */
-  const boardRes = canvasTex(THREE, 560, 990, (g, w, h) => {
+  const boardRes = canvasTex(THREE, 560, 1200, (g, w, h) => {
     g.fillStyle = '#0b0d12'; g.fillRect(0, 0, w, h);
   });
   const bAt = onWall(R.BOARD, 0);

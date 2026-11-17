@@ -583,7 +583,7 @@ function drawBoard() {
   g.fillRect(24, 78, W - 48, 2);
 
   const cur = room ? room.idx : 0;
-  const rows = 15;                       // 세로로 길어져 더 많이 보인다
+  const rows = 19;                       // 세로로 길어져 더 많이 보인다
   const rowH = 58;
   const start = Math.max(0, Math.min(Math.max(0, list.length - rows), cur - 4));
   g.font = '23px "Noto Sans KR",sans-serif';
