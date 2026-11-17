@@ -1,0 +1,13 @@
+{
+  "name": "weech",
+  "version": "1.0.0",
+  "description": "위치(WEECH) — 유튜브를 같이 보는 3D 라운지",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "three": "^0.169.0"
+  }
+}

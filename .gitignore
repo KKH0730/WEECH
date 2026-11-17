@@ -1,0 +1,12 @@
+# 의존성 — three.js 는 public/vendor/ 에 복사해 두므로 저장소에는 넣지 않는다
+node_modules/
+
+# 로그 / 임시
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+
+# 에디터
+.vscode/
+.idea/
