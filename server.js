@@ -96,12 +96,66 @@ function itemsAfter(html, key) {
 
 const listCache = new Map();    // listId -> [{id,title}]
 
-/* 재생목록을 펼친다 — API 키 없이 공개 페이지에서 긁는다 */
+// youtube.com 웹이 내부적으로 쓰는 InnerTube 키(공개 상수 — API 키 발급 불필요)
+const YT_KEY = 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8';
+const YT_CTX = { client: { clientName: 'WEB', clientVersion: '2.20240101.00.00', hl: 'ko' } };
+
+/* InnerTube /next — 재생목록 패널을 통째로 받는다 (제목까지, 최대 ~200곡 한 번에).
+ * YouTube 가 재생목록 페이지를 클라이언트 렌더링으로 바꿔 HTML 긁기가 깨진 뒤의 정식 경로. */
+async function expandViaInnerTube(ref) {
+  const body = { context: YT_CTX, playlistId: ref.list };
+  if (ref.seed) body.videoId = ref.seed;
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 9000);
+  let j;
+  try {
+    const r = await fetch('https://www.youtube.com/youtubei/v1/next?key=' + YT_KEY, {
+      method: 'POST', signal: ctl.signal,
+      headers: { 'content-type': 'application/json', 'accept-language': 'ko' },
+      body: JSON.stringify(body)
+    });
+    if (!r.ok) return [];
+    j = await r.json();
+  } catch (e) { return []; } finally { clearTimeout(timer); }
+
+  const panel = j && j.contents && j.contents.twoColumnWatchNextResults
+    && j.contents.twoColumnWatchNextResults.playlist
+    && j.contents.twoColumnWatchNextResults.playlist.playlist;
+  const contents = (panel && panel.contents) || [];
+  const seen = new Set();
+  const list = [];
+  for (const c of contents) {
+    const v = c && c.playlistPanelVideoRenderer;
+    if (!v || !v.videoId || seen.has(v.videoId)) continue;
+    seen.add(v.videoId);
+    let title = '';
+    if (v.title) title = v.title.simpleText || (v.title.runs || []).map((x) => x.text).join('');
+    list.push({ id: v.videoId, title: String(title).slice(0, 120) });
+    if (list.length >= MAX_PLAYLIST) break;
+  }
+  return list;
+}
+
+/* 재생목록을 펼친다 — API 키 없이. 먼저 InnerTube, 실패하면 공개 페이지 긁기. */
 async function expandPlaylist(ref) {
   const key = ref.list + '|' + (ref.seed || '');
   if (listCache.has(key)) return listCache.get(key);
 
-  // 믹스(RD…)는 목록 페이지가 비어 있다. 씨앗 영상의 시청 페이지에서만 목록이 만들어진다.
+  // 1순위: InnerTube /next (제목 포함, 순서 유지)
+  const via = await expandViaInnerTube(ref);
+  if (via.length) {
+    // 씨앗 영상이 있으면 그 곡부터
+    if (ref.seed) {
+      const at = via.findIndex((it) => it.id === ref.seed);
+      if (at > 0) via.unshift(via.splice(at, 1)[0]);
+      else if (at < 0) via.unshift({ id: ref.seed, title: '' });
+    }
+    listCache.set(key, via);
+    setTimeout(() => listCache.delete(key), 10 * 60 * 1000);
+    return via;
+  }
+
+  // 2순위: 믹스(RD…)는 목록 페이지가 비어 있다. 씨앗 영상의 시청 페이지에서만 목록이 만들어진다.
   const urls = [];
   if (ref.seed) urls.push('https://www.youtube.com/watch?v=' + ref.seed + '&list=' + ref.list);
   urls.push('https://www.youtube.com/playlist?list=' + ref.list);
@@ -406,10 +460,20 @@ function pushLobby() {
 
 function roomPayload(r) {
   return {
-    code: r.code, title: r.title, hostId: r.hostId, cap: ROOM_CAP,
+    code: r.code, title: r.title, hostId: r.hostId, coHosts: Array.from(r.coHosts || []), cap: ROOM_CAP,
     playlist: r.playlist, idx: r.idx,
     playing: r.playing, position: currentPosition(r), serverNow: Date.now()
   };
+}
+
+/* 재생·설정을 조작할 수 있는 사람 = 방장 또는 부방장 */
+function privileged(r, user) {
+  return user && (r.hostId === user.id || (r.coHosts && r.coHosts.has(user.id)));
+}
+
+/* 역할(방장·부방장) 변경을 방 전원에게 알린다 */
+function broadcastRoles(r) {
+  broadcast(r, { t: 'roles', hostId: r.hostId, coHosts: Array.from(r.coHosts || []) });
 }
 
 /* 지금 이 순간의 재생 위치 (초) */
@@ -433,17 +497,24 @@ function leaveRoom(user) {
   const r = user.room;
   if (!r) return;
   r.users.delete(user.id);
+  if (r.coHosts) r.coHosts.delete(user.id);
   user.room = null;
   if (r.users.size === 0) {
     rooms.delete(r.code);
     console.log('  방이 비어 닫혔습니다. [' + r.code + '] ' + r.title);
   } else {
     if (r.hostId === user.id) {
-      // 가장 오래 있던 사람에게 방장을 넘긴다
+      // 부방장이 있으면 그 중 가장 오래 있던 사람, 없으면 전체에서 가장 오래 있던 사람에게 넘긴다
       let next = null;
-      for (const u of r.users.values()) if (!next || u.joinedAt < next.joinedAt) next = u;
+      for (const u of r.users.values()) {
+        if (!r.coHosts.has(u.id)) continue;
+        if (!next || u.joinedAt < next.joinedAt) next = u;
+      }
+      if (!next) for (const u of r.users.values()) if (!next || u.joinedAt < next.joinedAt) next = u;
       r.hostId = next.id;
+      r.coHosts.delete(next.id);
       broadcast(r, { t: 'host', id: r.hostId, name: next.name });
+      broadcastRoles(r);
     }
     broadcast(r, { t: 'user-', id: user.id, name: user.name });
   }
@@ -519,7 +590,7 @@ function handleMessage(entry, m, now) {
       if (!code) { conn.send({ t: 'err', msg: '방 코드를 만들지 못했습니다.' }); return; }
 
       const room = {
-        code: code, title: title, hostId: 0, createdAt: Date.now(),
+        code: code, title: title, hostId: 0, coHosts: new Set(), createdAt: Date.now(),
         playlist: res.items,
         idx: 0, playing: false, position: 0, updatedAt: Date.now(),
         users: new Map()
@@ -552,7 +623,8 @@ function handleMessage(entry, m, now) {
 
   if (!user || !user.room) return;
   const room = user.room;
-  const isHost = room.hostId === user.id;
+  const isHost = room.hostId === user.id;        // 방장 본인 (역할 변경 권한)
+  const canCtl = privileged(room, user);         // 방장 또는 부방장 (재생·설정 권한)
 
   /* ---- 방 안 ---- */
   switch (m.t) {
@@ -569,6 +641,8 @@ function handleMessage(entry, m, now) {
       user.dir = clampNum(m.dir, -10, 10);
       user.st = (m.st | 0) & 3;
       user.h = clampNum(m.h, 0, 400);          // 점프 높이 (cm)
+      user.hy = clampNum(m.hy, -2, 2);         // 고개 좌우 (시선)
+      user.hp = clampNum(m.hp, -2, 2);         // 고개 상하 (시선)
       return;
 
     case 'chat': {
@@ -594,9 +668,9 @@ function handleMessage(entry, m, now) {
       return;
     }
 
-    /* ---- 방장 전용 ---- */
+    /* ---- 방장·부방장 전용 ---- */
     case 'ctrl': {
-      if (!isHost) { conn.send({ t: 'err', msg: '방장만 재생을 조작할 수 있습니다.' }); return; }
+      if (!canCtl) { conn.send({ t: 'err', msg: '방장·부방장만 재생을 조작할 수 있습니다.' }); return; }
       const op = String(m.op || '');
       if (op === 'play') setPlayback(room, { playing: true, position: clampNum(m.v, 0, 86400) });
       else if (op === 'pause') setPlayback(room, { playing: false, position: clampNum(m.v, 0, 86400) });
@@ -632,7 +706,7 @@ function handleMessage(entry, m, now) {
     }
 
     case 'settings': {
-      if (!isHost) { conn.send({ t: 'err', msg: '방장만 설정을 바꿀 수 있습니다.' }); return; }
+      if (!canCtl) { conn.send({ t: 'err', msg: '방장·부방장만 설정을 바꿀 수 있습니다.' }); return; }
       const title = clean(m.title, 40);
       if (title) room.title = title;
       if (typeof m.links === 'string' && parseLinks(m.links).length) {
@@ -640,7 +714,7 @@ function handleMessage(entry, m, now) {
           conn.send({ t: 'busy', msg: '재생목록을 펼치는 중…' });
         }
         resolveLinks(m.links).then((res) => {
-          if (!rooms.has(room.code) || room.hostId !== user.id) return;
+          if (!rooms.has(room.code) || !privileged(room, user)) return;
           if (!res.items.length) { conn.send({ t: 'err', msg: '재생목록에서 영상을 찾지 못했습니다.' }); return; }
           const keep = new Map(room.playlist.map((it) => [it.id, it]));
           const curId = room.playlist[room.idx] ? room.playlist[room.idx].id : null;
@@ -658,6 +732,29 @@ function handleMessage(entry, m, now) {
       }
       broadcast(room, { t: 'room', title: room.title, playlist: room.playlist });
       pushLobby();
+      return;
+    }
+
+    /* ---- 방장 본인 전용: 역할 관리 ---- */
+    case 'makehost': {
+      if (!isHost) { conn.send({ t: 'err', msg: '방장만 방장을 넘길 수 있습니다.' }); return; }
+      const target = room.users.get(m.id | 0);
+      if (!target || target.id === room.hostId) return;
+      room.hostId = target.id;
+      room.coHosts.delete(target.id);     // 새 방장은 부방장 목록에서 뺀다
+      broadcast(room, { t: 'host', id: room.hostId, name: target.name });
+      broadcastRoles(room);
+      pushLobby();
+      return;
+    }
+
+    case 'cohost': {
+      if (!isHost) { conn.send({ t: 'err', msg: '방장만 부방장을 지정할 수 있습니다.' }); return; }
+      const target = room.users.get(m.id | 0);
+      if (!target || target.id === room.hostId) return;
+      if (m.on) room.coHosts.add(target.id);
+      else room.coHosts.delete(target.id);
+      broadcastRoles(room);
       return;
     }
   }
@@ -690,7 +787,8 @@ setInterval(() => {
     if (!r.users.size) continue;
     const arr = [];
     for (const u of r.users.values()) {
-      arr.push([u.id, Math.round(u.x), Math.round(u.y), Math.round(u.dir * 100) / 100, u.st, u.name, Math.round(u.h || 0)]);
+      arr.push([u.id, Math.round(u.x), Math.round(u.y), Math.round(u.dir * 100) / 100, u.st, u.name, Math.round(u.h || 0),
+        Math.round((u.hy || 0) * 100) / 100, Math.round((u.hp || 0) * 100) / 100]);
     }
     const msg = JSON.stringify({ t: 's', u: arr });
     for (const u of r.users.values()) u.conn.send(msg);

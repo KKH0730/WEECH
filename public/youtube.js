@@ -13,6 +13,7 @@ import * as THREE from 'three';
 import { CSS3DObject } from './vendor/CSS3DRenderer.js';
 
 const PX_W = 1280, PX_H = 720;      // iframe 의 픽셀 크기 (16:9)
+const DEFAULT_VOL = 25;             // 처음 입장 시 기본 볼륨 (%)
 
 let player = null;
 let ready = false;
@@ -63,9 +64,11 @@ export function init(opts) {
         playsinline: 1, fs: 0, iv_load_policy: 3, origin: location.origin
       },
       events: {
-        onReady: function () { ready = true; apply(true); },
+        onReady: function () { ready = true; try { player.setVolume(DEFAULT_VOL); } catch (e) { /* ignore */ } apply(true); },
         onStateChange: function (e) {
           if (e.data === 0 && onEnded) onEnded();
+          // 자막 설정을 새 영상에 다시 적용 (영상마다 초기화되므로)
+          if (e.data === 1 && ccOn) applyCaptions();
         },
         onError: function () { if (onEnded) onEnded(); }
       }
@@ -94,16 +97,59 @@ export function setState(st, id) {
   apply(true);
 }
 
+let playTimer = null;
+let lastLoadAt = 0;
+
+/* 영상을 플레이어에 건다. play=true 면 로드(자동재생 시도), false 면 예고만 한다. */
+function doLoad(play) {
+  loadedId = base.id;
+  lastLoadAt = Date.now();
+  const start = Math.max(0, targetTime());
+  try {
+    if (play) player.loadVideoById({ videoId: base.id, startSeconds: start });
+    else player.cueVideoById({ videoId: base.id, startSeconds: start });
+  } catch (e) { /* ignore */ }
+}
+
+/* 재생 중이어야 하는데 안 돌고 있으면 돌린다.
+ * 소리 있는 자동재생은 사용자 제스처(방장의 재생 클릭)가 없으면 브라우저가 막는다.
+ * 방장은 그대로 소리가 나고, 그 외(입장자·동기화)는 음소거로라도 재생해 화면을 띄운다. */
+function ensurePlaying() {
+  if (!ready || !player || !base.playing) return;
+  let st = -1;
+  try { st = player.getPlayerState(); } catch (e) { return; }
+  if (st === 1) return;                       // 이미 재생 중
+  // CUED(5)·UNSTARTED(-1) 은 아직 한 번도 안 돈 상태 — playVideo 로는 화면이 안 뜰 수 있다.
+  // (방장은 영상을 '예고'만 해둔 cued 상태라 여기에 걸린다) 아예 로드해 강제로 띄운다.
+  // 단, 방금 로드했으면 그 로드가 진행되게 둔다.
+  if ((st === 5 || st === -1) && Date.now() - lastLoadAt > 1200) {
+    doLoad(true);
+  } else {
+    try { player.playVideo(); } catch (e) { /* ignore */ }
+  }
+  if (playTimer) return;                      // 확인이 이미 예약돼 있다
+  playTimer = setTimeout(function () {
+    playTimer = null;
+    if (!base.playing) return;
+    let s2 = -1;
+    try { s2 = player.getPlayerState(); } catch (e) { return; }
+    if (s2 === 1) return;                      // 소리와 함께 재생됐다 (제스처 있었음)
+    // 여기까지 왔으면 소리 있는 자동재생이 막힌 것 — 음소거로 띄우고 버튼을 내건다
+    try {
+      player.mute();
+      player.playVideo();
+      if (onBlocked) onBlocked('mute');
+    } catch (e) { /* ignore */ }
+  }, 1500);
+}
+
 function apply(force) {
   if (!ready || !player || !base.id) return;
   const want = Math.max(0, targetTime());
 
   if (loadedId !== base.id) {
-    loadedId = base.id;
-    try {
-      if (base.playing) player.loadVideoById({ videoId: base.id, startSeconds: want });
-      else player.cueVideoById({ videoId: base.id, startSeconds: want });
-    } catch (e) { /* ignore */ }
+    doLoad(base.playing);
+    if (base.playing) ensurePlaying();         // 로드만으론 자동재생이 막힐 수 있다 — 재생을 보장한다
     return;
   }
 
@@ -115,18 +161,8 @@ function apply(force) {
 
   let st = -1;
   try { st = player.getPlayerState(); } catch (e) { /* ignore */ }
-  if (base.playing && st !== 1 && st !== 3) {
-    try { player.playVideo(); } catch (e) { /* ignore */ }
-    setTimeout(function () {
-      try {
-        const s2 = player.getPlayerState();
-        if (base.playing && s2 !== 1 && s2 !== 3) {
-          player.mute();
-          player.playVideo();
-          if (onBlocked) onBlocked('mute');
-        }
-      } catch (e) { /* ignore */ }
-    }, 1200);
+  if (base.playing && st !== 1) {
+    ensurePlaying();
   }
   if (!base.playing && st === 1) {
     try { player.pauseVideo(); } catch (e) { /* ignore */ }
@@ -148,12 +184,92 @@ function tick() {
 
 export function unmute() {
   if (!player) return;
-  try { player.unMute(); player.setVolume(80); player.playVideo(); } catch (e) { /* ignore */ }
+  try { player.unMute(); player.setVolume(DEFAULT_VOL); player.playVideo(); } catch (e) { /* ignore */ }
 }
+
+/* ---- 볼륨 (각자 로컬) ---- */
+export function setVol(v) {
+  if (!player) return;
+  v = Math.max(0, Math.min(100, v | 0));
+  try {
+    if (v > 0 && player.isMuted && player.isMuted()) player.unMute();
+    player.setVolume(v);
+  } catch (e) { /* ignore */ }
+}
+export function getVol() {
+  try { return player && ready ? (player.getVolume() | 0) : 80; } catch (e) { return 80; }
+}
+export function setMuted(on) {
+  if (!player) return;
+  try { on ? player.mute() : player.unMute(); } catch (e) { /* ignore */ }
+}
+export function isMuted() {
+  try { return player && ready ? !!player.isMuted() : false; } catch (e) { return false; }
+}
+
+/* ---- 자막 (각자 로컬) ---- */
+let ccOn = false;
+let ccLang = null;             // 선택한 자막 언어코드 (null = 첫 번째/기본)
+
+/* 모듈 이름이 플레이어 버전에 따라 'captions' 또는 'cc' 라, 둘 다 시도한다 */
+function ccModules() { return ['captions', 'cc']; }
+
+/* 지금 영상이 제공하는 자막 트랙 목록 [{code, label, asr}] */
+export function captionTracks() {
+  if (!player || !ready) return [];
+  let tracks = [];
+  for (const mod of ccModules()) {
+    try { const t = player.getOption(mod, 'tracklist'); if (t && t.length) { tracks = t; break; } } catch (e) { /* ignore */ }
+  }
+  const seen = new Set();
+  const out = [];
+  for (const t of tracks) {
+    const code = t.languageCode || t.vss_id || '';
+    if (!code || seen.has(code)) continue;
+    seen.add(code);
+    const name = t.languageName || t.displayName || code;
+    out.push({ code: code, label: name + (t.kind === 'asr' ? ' (자동생성)' : ''), asr: t.kind === 'asr' });
+  }
+  return out;
+}
+
+function applyCaptions() {
+  if (!player) return;
+  try {
+    if (ccOn) {
+      for (const mod of ccModules()) { try { player.loadModule(mod); } catch (e) { /* ignore */ } }
+      const tracks = captionTracks();
+      if (tracks.length) {
+        const pick = (ccLang && tracks.find((t) => t.code === ccLang)) || tracks[0];
+        for (const mod of ccModules()) {
+          try { player.setOption(mod, 'track', { languageCode: pick.code }); } catch (e) { /* ignore */ }
+        }
+      }
+    } else {
+      for (const mod of ccModules()) { try { player.unloadModule(mod); } catch (e) { /* ignore */ } }
+    }
+  } catch (e) { /* ignore */ }
+}
+export function setCaptions(on) {
+  ccOn = (typeof on === 'boolean') ? on : !ccOn;
+  applyCaptions();
+  return ccOn;
+}
+export function setCaptionLang(code) {
+  ccLang = code || null;
+  if (ccOn) applyCaptions();
+}
+export function captionLang() { return ccLang; }
+export function captionsOn() { return ccOn; }
 
 export function currentTime() {
   try { return player && ready ? (player.getCurrentTime() || 0) : targetTime(); }
   catch (e) { return targetTime(); }
+}
+
+export function duration() {
+  try { return player && ready ? (player.getDuration() || 0) : 0; }
+  catch (e) { return 0; }
 }
 
 export const isReady = () => ready;

@@ -150,6 +150,7 @@ export function makeAvatar(opts) {
   let bubble = null, bubbleT = 0;
   const ph = Math.random() * 6.28;
   let stride = 0;
+  let hYaw = 0, hPitch = 0;          // 부드럽게 따라가는 고개 각도 (몸 기준)
 
   const api = {
     root: root,
@@ -209,6 +210,15 @@ export function makeAvatar(opts) {
         armL.rotation.x = -0.9; armR.rotation.x = -0.9;
       }
       head.rotation.z = walking ? sw * 0.04 : Math.sin(t * 1.2 + ph) * 0.02;
+
+      // 시선(카메라 회전)에 따라 고개를 돌린다 — p.hy: 좌우(몸 기준), p.hp: 상하
+      const thy = Math.max(-1.3, Math.min(1.3, p.hy || 0));
+      const thp = Math.max(-0.6, Math.min(0.6, p.hp || 0));
+      const hk = Math.min(1, dt * 12);
+      hYaw += (thy - hYaw) * hk;
+      hPitch += (thp - hPitch) * hk;
+      head.rotation.y = hYaw;
+      head.rotation.x = hPitch;
 
       // 눈 깜빡임
       const blink = Math.sin(t * 0.8 + ph * 3) > 0.985 ? 0.12 : 1;

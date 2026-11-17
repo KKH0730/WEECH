@@ -62,6 +62,8 @@ const me = {
 const others = new Map();
 let myAvatar = null;
 let room = null, isHost = false;
+let coHosts = [];                                  // 부방장 id 목록
+const canCtl = () => isHost || coHosts.includes(myId);   // 재생·설정을 조작할 수 있는가
 
 const darts = [];
 let moveTarget = null;
@@ -293,6 +295,7 @@ function connect() {
         myId = m.you; me.id = m.you;
         room = m.room;
         isHost = (m.host === myId);
+        coHosts = (room && room.coHosts) || [];
         lastJoin = { code: room.code, name: me.name };
         clearAvatars();
         (m.users || []).forEach((u) => {
@@ -315,6 +318,7 @@ function connect() {
           if (!g) g = addOther({ id: id, name: a[5], x: a[1], y: a[2] });
           g.tx = a[1] / 100; g.tz = a[2] / 100; g.tdir = a[3]; g.st = a[4];
           g.ty = (a[6] || 0) / 100;
+          g.hy = a[7] || 0; g.hp = a[8] || 0;        // 고개 각도 (시선)
           if (a[5] && a[5] !== g.name) { g.name = a[5]; g.av.setName(a[5]); }
         });
         for (const id of Array.from(others.keys())) if (!seen.has(id)) removeOther(id);
@@ -344,6 +348,18 @@ function connect() {
         if (isHost) toast('방장이 되었습니다. 재생을 조작할 수 있습니다.', 3400);
         break;
 
+      case 'roles': {
+        if (room) room.hostId = m.hostId;
+        isHost = (m.hostId === myId);
+        const wasCo = coHosts.includes(myId);
+        coHosts = m.coHosts || [];
+        if (!wasCo && coHosts.includes(myId) && !isHost) toast('부방장이 되었습니다. 재생을 조작할 수 있습니다.', 3400);
+        if (wasCo && !coHosts.includes(myId) && !isHost) toast('부방장에서 해제되었습니다.', 2600);
+        applyHostUI();
+        renderPeople();
+        break;
+      }
+
       case 'chat': {
         const g = others.get(m.id);
         const av = m.id === myId ? myAvatar : (g ? g.av : null);
@@ -370,6 +386,7 @@ function connect() {
         $('roomTitle').textContent = room.title;
         updateNowPlaying();
         drawBoard();
+        renderPlTracks();
         break;
     }
   };
@@ -516,24 +533,62 @@ $('peopleToggle').addEventListener('click', () => {
   if (peopleOpen) renderPeople();
 });
 
+let peopleSig = '';
 function renderPeople() {
   if (!peopleOpen) return;
+  // 명단·역할이 실제로 바뀐 경우에만 DOM 을 다시 만든다.
+  // (위치 브로드캐스트가 10Hz 로 들어와 매번 다시 그리면 커서 밑 버튼이 깜빡인다)
+  const sig = JSON.stringify([
+    peopleCache.map((p) => [p.id, p.name]),
+    room && room.hostId, coHosts, isHost, myId
+  ]);
+  if (sig === peopleSig) return;
+  peopleSig = sig;
+
   const box = $('peopleList');
   if (!peopleCache.length) { box.innerHTML = '<div class="person"><span class="nm dim">—</span></div>'; return; }
   box.innerHTML = peopleCache.map((p) => {
     const c = colorOf(p.id)[0].toString(16).padStart(6, '0');
+    const isP = room && room.hostId === p.id;
+    const isCo = coHosts.includes(p.id);
     const badges =
-      (room && room.hostId === p.id ? '<span class="badge host">방장</span>' : '') +
+      (isP ? '<span class="badge host">방장</span>' : '') +
+      (isCo ? '<span class="badge cohost">부방장</span>' : '') +
       (p.id === myId ? '<span class="badge me">나</span>' : '');
+    // 방장 본인만, 자기 자신이 아닌 다른 사람에게 역할 버튼을 보여준다
+    let acts = '';
+    if (isHost && p.id !== myId && !isP) {
+      acts = '<span class="pacts">' +
+        '<button class="pbtn" data-act="cohost" data-id="' + p.id + '" data-on="' + (isCo ? '0' : '1') + '">' +
+        (isCo ? '부방장 해제' : '부방장 지정') + '</button>' +
+        '<button class="pbtn" data-act="makehost" data-id="' + p.id + '">방장 넘기기</button>' +
+        '</span>';
+    }
     return '<div class="person"><span class="swatch" style="background:#' + c + '"></span>' +
-           '<span class="nm">' + esc(p.name || '익명') + '</span>' + badges + '</div>';
+           '<span class="nm">' + esc(p.name || '익명') + '</span>' + badges + acts + '</div>';
   }).join('');
 }
 
+/* 유저리스트의 역할 버튼 (방장만) — 다시 그려도 유지되게 위임으로 처리 */
+$('peopleList').addEventListener('click', (e) => {
+  const b = e.target.closest('button.pbtn');
+  if (!b || !isHost) return;
+  const id = +b.dataset.id;
+  if (b.dataset.act === 'makehost') {
+    const p = peopleCache.find((x) => x.id === id);
+    if (confirm((p ? p.name : '이 사람') + ' 님에게 방장을 넘기시겠습니까?')) send({ t: 'makehost', id: id });
+  } else if (b.dataset.act === 'cohost') {
+    send({ t: 'cohost', id: id, on: b.dataset.on === '1' });
+  }
+});
+
 function applyHostUI() {
-  $('hostCtl').hidden = !isHost;
-  $('guestNote').hidden = isHost;
-  $('settingsBtn').hidden = !isHost;
+  const ctl = canCtl();
+  $('hostCtl').hidden = !ctl;
+  $('guestNote').hidden = ctl;
+  $('playlistBtn').hidden = !ctl;
+  $('titleEdit').hidden = !ctl;
+  $('playerbar').classList.toggle('host-seek', ctl);
   $('roomHost').textContent = (room && room.hostId === myId ? '나' : hostName());
 }
 
@@ -551,20 +606,174 @@ function applyPlayback() {
   $('playBtn').textContent = room && room.playing ? '❚❚' : '▶';
   updateNowPlaying();
   drawBoard();
+  renderPlTracks();
 }
 
 function updateNowPlaying() {
   const it = currentItem();
   const n = room && room.playlist ? room.playlist.length : 0;
-  $('nowPlaying').textContent = it ? ((room.idx + 1) + '/' + n + '  ' + (it.title || it.id)) : '재생목록이 비어 있습니다';
+  const label = it ? ((room.idx + 1) + '/' + n + '  ' + (it.title || it.id)) : '재생목록이 비어 있습니다';
+  const box = $('nowPlaying'), txt = $('npText');
+  box.classList.remove('scroll');
+  txt.style.animationDuration = '';
+  txt.textContent = label;                       // 먼저 한 줄(말줄임)로 두고 폭을 잰다
+  requestAnimationFrame(() => {
+    if (txt.scrollWidth > box.clientWidth + 2) {  // 넘치면 흐르는 애니메이션으로 전환
+      txt.textContent = '';
+      for (let i = 0; i < 2; i++) {
+        const seg = document.createElement('span');
+        seg.className = 'np-seg';
+        seg.textContent = label;
+        txt.appendChild(seg);
+      }
+      box.classList.add('scroll');
+      txt.style.animationDuration = Math.max(7, label.length * 0.38) + 's';
+    }
+  });
 }
 
 $('playBtn').addEventListener('click', () => {
-  if (!isHost || !room) return;
+  if (!canCtl() || !room) return;
   send({ t: 'ctrl', op: room.playing ? 'pause' : 'play', v: TV.currentTime() });
 });
-$('prevBtn').addEventListener('click', () => { if (isHost) send({ t: 'ctrl', op: 'prev' }); });
-$('nextBtn').addEventListener('click', () => { if (isHost) send({ t: 'ctrl', op: 'next' }); });
+$('prevBtn').addEventListener('click', () => { if (canCtl()) send({ t: 'ctrl', op: 'prev' }); });
+$('nextBtn').addEventListener('click', () => { if (canCtl()) send({ t: 'ctrl', op: 'next' }); });
+
+/* ±10 / ±30초 탐색 — 지금 위치 기준으로 자리 이동 */
+function seekBy(delta) {
+  if (!canCtl() || !room) return;
+  const dur = TV.duration();
+  let pos = TV.currentTime() + delta;
+  if (pos < 0) pos = 0;
+  if (dur > 0 && pos > dur) pos = dur;
+  send({ t: 'ctrl', op: 'seek', v: pos });
+}
+$('back30').addEventListener('click', () => seekBy(-30));
+$('back10').addEventListener('click', () => seekBy(-10));
+$('fwd10').addEventListener('click', () => seekBy(10));
+$('fwd30').addEventListener('click', () => seekBy(30));
+
+/* ------------------------------------------------------------------ */
+/* 프로그레스 바 — 모두 진행 표시, 드래그 탐색은 방장만                  */
+/* ------------------------------------------------------------------ */
+const fmtTime = (s) => {
+  s = Math.max(0, Math.floor(s || 0));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60;
+  const mm = h ? String(m).padStart(2, '0') : String(m);
+  return (h ? h + ':' : '') + mm + ':' + String(ss).padStart(2, '0');
+};
+
+let dragging = false;
+
+function ratioFromEvent(e) {
+  const rect = $('progress').getBoundingClientRect();
+  if (rect.width <= 0) return 0;
+  let r = (e.clientX - rect.left) / rect.width;
+  return r < 0 ? 0 : (r > 1 ? 1 : r);
+}
+
+function paintProgress(ratio) {
+  $('progFill').style.width = (ratio * 100) + '%';
+  $('progKnob').style.left = (ratio * 100) + '%';
+}
+
+/* 실제 재생 위치로 바를 갱신 — 드래그 중에는 건드리지 않는다 */
+function refreshProgress() {
+  if (dragging) return;
+  const dur = TV.duration();
+  const cur = TV.currentTime();
+  paintProgress(dur > 0 ? Math.min(1, cur / dur) : 0);
+  $('curTime').textContent = fmtTime(cur);
+  $('durTime').textContent = dur > 0 ? fmtTime(dur) : '0:00';
+}
+setInterval(() => { if (screen === 'room' && TV.isReady()) { refreshProgress(); refreshMedia(); } }, 250);
+
+const prog = $('progress');
+prog.addEventListener('pointerdown', (e) => {
+  if (!canCtl() || !room) return;
+  dragging = true;
+  prog.setPointerCapture(e.pointerId);
+  const r = ratioFromEvent(e);
+  paintProgress(r);
+  const dur = TV.duration();
+  if (dur > 0) $('curTime').textContent = fmtTime(r * dur);
+});
+prog.addEventListener('pointermove', (e) => {
+  if (!dragging) return;
+  const r = ratioFromEvent(e);
+  paintProgress(r);
+  const dur = TV.duration();
+  if (dur > 0) $('curTime').textContent = fmtTime(r * dur);
+});
+function endDrag(e) {
+  if (!dragging) return;
+  dragging = false;
+  try { prog.releasePointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+  const dur = TV.duration();
+  if (canCtl() && room && dur > 0) send({ t: 'ctrl', op: 'seek', v: ratioFromEvent(e) * dur });
+}
+prog.addEventListener('pointerup', endDrag);
+prog.addEventListener('pointercancel', endDrag);
+
+/* ------------------------------------------------------------------ */
+/* 볼륨 · 화질 — 각자 자기 화면에만 적용 (동기화하지 않는다)            */
+/* ------------------------------------------------------------------ */
+const volSlider = $('volSlider'), muteToggle = $('muteToggle');
+let lastVol = 25;
+
+function updateMuteIcon() {
+  const v = +volSlider.value;
+  muteToggle.textContent = (v === 0 || TV.isMuted()) ? '🔇' : (v < 50 ? '🔉' : '🔊');
+}
+volSlider.addEventListener('input', () => {
+  const v = +volSlider.value;
+  TV.setVol(v);
+  if (v > 0) { lastVol = v; $('unmuteBtn').hidden = true; }
+  updateMuteIcon();
+});
+muteToggle.addEventListener('click', () => {
+  if (+volSlider.value === 0 || TV.isMuted()) {
+    const v = lastVol || 80; volSlider.value = v; TV.setVol(v); $('unmuteBtn').hidden = true;
+  } else {
+    lastVol = +volSlider.value || 80; volSlider.value = 0; TV.setMuted(true);
+  }
+  updateMuteIcon();
+});
+
+/* 자막 (로컬) — 켜기/끄기 + 언어 선택 */
+const ccToggle = $('ccToggle'), ccLangSel = $('ccLangSel');
+let ccLangSig = '';
+ccToggle.addEventListener('click', () => {
+  const on = TV.setCaptions();
+  ccToggle.classList.toggle('on', on);
+  ccLangSel.hidden = !on;
+  ccLangSig = '';                 // 다시 채우도록
+  if (on) refreshCaptions();
+  toast(on ? '자막 켜기 — 영상에 자막이 있으면 표시됩니다' : '자막 끄기', 2200);
+});
+ccLangSel.addEventListener('change', () => TV.setCaptionLang(ccLangSel.value));
+
+/* 자막 언어 목록으로 드롭다운을 채운다 (자막이 켜져 있을 때만) */
+function refreshCaptions() {
+  if (!TV.captionsOn()) return;
+  const tracks = TV.captionTracks();
+  const sig = tracks.map((t) => t.code).join(',');
+  if (sig === ccLangSig) return;
+  ccLangSig = sig;
+  const cur = TV.captionLang() || ccLangSel.value;
+  if (!tracks.length) {
+    ccLangSel.innerHTML = '<option value="">자막 없음</option>';
+    return;
+  }
+  ccLangSel.innerHTML = tracks.map((t) => '<option value="' + t.code + '">' + t.label + '</option>').join('');
+  if ([...ccLangSel.options].some((o) => o.value === cur)) ccLangSel.value = cur;
+}
+
+/* 볼륨 아이콘 · 자막 목록 주기 갱신 */
+function refreshMedia() {
+  updateMuteIcon();
+  refreshCaptions();
+}
 
 setInterval(() => {
   if (screen === 'room' && isHost && room && room.playing && TV.isReady()) {
@@ -584,22 +793,125 @@ $('unmuteBtn').addEventListener('click', () => { TV.unmute(); $('unmuteBtn').hid
 /* ------------------------------------------------------------------ */
 /* 방 설정                                                              */
 /* ------------------------------------------------------------------ */
-$('settingsBtn').addEventListener('click', () => {
-  if (!isHost || !room) return;
-  $('setTitle').value = room.title;
-  $('setLinks').value = (room.playlist || []).map((it) => 'https://www.youtube.com/watch?v=' + it.id).join('\n');
-  $('setCount').textContent = linkLabel($('setLinks').value);
-  $('settingsModal').hidden = false;
+function openPlaylist() {
+  if (!canCtl() || !room) return;
+  $('plAddInput').value = '';
+  $('playlistPanel').hidden = false;   // 먼저 띄워야 renderPlTracks 가 그린다
+  renderPlTracks();
+}
+$('playlistBtn').addEventListener('click', () => {
+  // 토글 — 열려 있으면 닫는다
+  if (!$('playlistPanel').hidden) { $('playlistPanel').hidden = true; return; }
+  openPlaylist();
 });
-$('setLinks').addEventListener('input', () => { $('setCount').textContent = linkLabel($('setLinks').value); });
-$('saveSettings').addEventListener('click', () => {
-  const title = $('setTitle').value.trim();
-  const links = $('setLinks').value.trim();
-  if (!countIds(links)) { toast('링크를 하나 이상 남겨 주세요.', 2600); return; }
-  send({ t: 'settings', title: title, links: links });
-  $('settingsModal').hidden = true;
-  toast('방 설정을 저장했습니다.', 2200);
+
+/* 현재 재생목록을 링크 문자열로 바꾼다 (서버는 settings 로 목록 전체를 교체한다) */
+function currentIds() { return (room && room.playlist || []).map((it) => it.id); }
+
+/* 재생목록 모달 — 제목 누르면 재생, ✕ 로 제거 (방장·부방장) */
+function renderPlTracks() {
+  const box = $('plTracks');
+  if (!box || $('playlistPanel').hidden) return;
+  const list = (room && room.playlist) || [];
+  if (!list.length) { box.innerHTML = '<div class="pl-empty">재생목록이 비어 있습니다</div>'; return; }
+  const cur = room ? room.idx : 0;
+  box.innerHTML = list.map((it, i) =>
+    '<div class="pl-row' + (i === cur ? ' on' : '') + '">' +
+    '<button class="pl-play" data-idx="' + i + '" title="재생">' +
+    '<span class="pl-num">' + (i === cur ? '▶' : (i + 1)) + '</span>' +
+    '<span class="pl-title"><span class="pl-tin">' + esc(it.title || it.id) + '</span></span></button>' +
+    '<button class="pl-del" data-del="' + i + '" title="제거" aria-label="제거">✕</button>' +
+    '</div>'
+  ).join('');
+  // 선택곡은 항상, 호버한 곡은 호버하는 동안만 제목을 흐르게 한다 (넘칠 때)
+  box.querySelectorAll('.pl-row').forEach((row) => {
+    const title = row.querySelector('.pl-title');
+    if (!title) return;
+    if (row.classList.contains('on')) requestAnimationFrame(() => setTitleMarquee(title, true));
+    row.addEventListener('mouseenter', () => setTitleMarquee(title, true));
+    row.addEventListener('mouseleave', () => { if (!row.classList.contains('on')) setTitleMarquee(title, false); });
+  });
+}
+
+/* 제목이 넘치면 두 벌로 이어 붙여 흐르게 한다 (on=켜기 / off=원래 말줄임) */
+function setTitleMarquee(title, on) {
+  const tin = title.querySelector('.pl-tin');
+  if (!tin) return;
+  if (on) {
+    if (title.classList.contains('scroll')) return;
+    if (tin.scrollWidth <= title.clientWidth + 2) return;        // 안 넘치면 그대로
+    const label = tin.dataset.full || tin.textContent;
+    tin.dataset.full = label;
+    tin.textContent = '';
+    for (let i = 0; i < 2; i++) {
+      const seg = document.createElement('span');
+      seg.className = 'pl-seg';
+      seg.textContent = label;
+      tin.appendChild(seg);
+    }
+    title.classList.add('scroll');
+    tin.style.animationDuration = Math.max(6, label.length * 0.34) + 's';
+  } else {
+    if (!title.classList.contains('scroll')) return;
+    title.classList.remove('scroll');
+    tin.style.animationDuration = '';
+    tin.textContent = tin.dataset.full || tin.textContent;
+  }
+}
+$('plTracks').addEventListener('click', (e) => {
+  if (!canCtl()) { toast('방장·부방장만 조작할 수 있습니다.', 2400); return; }
+  const del = e.target.closest('button.pl-del');
+  if (del) { removeTrack(+del.dataset.del); return; }
+  const play = e.target.closest('button.pl-play');
+  if (play) send({ t: 'ctrl', op: 'track', v: +play.dataset.idx });
 });
+
+function removeTrack(i) {
+  if (!canCtl() || !room || !room.playlist) return;
+  if (room.playlist.length <= 1) { toast('마지막 한 곡은 지울 수 없습니다.', 2600); return; }
+  const links = currentIds().filter((_, idx) => idx !== i).join('\n');
+  send({ t: 'settings', links: links });
+}
+function addTrack() {
+  if (!canCtl() || !room) return;
+  const v = $('plAddInput').value.trim();
+  if (!v) return;
+  if (!countIds(v)) { toast('유효한 유튜브 링크를 넣어 주세요.', 2600); return; }
+  const links = currentIds().concat(v).join('\n');   // 기존 뒤에 덧붙인다
+  send({ t: 'settings', links: links });
+  $('plAddInput').value = '';
+  toast('추가하는 중…', 1600);
+}
+$('plAddBtn').addEventListener('click', addTrack);
+$('plAddInput').addEventListener('keydown', (e) => {
+  e.stopPropagation();
+  if (e.key === 'Enter') { e.preventDefault(); addTrack(); }
+});
+
+/* 방 제목 인라인 편집 (연필) */
+$('titleEdit').addEventListener('click', () => {
+  if (!canCtl() || !room) return;
+  const inp = $('titleInput');
+  inp.value = room.title || '';
+  $('roomTitle').hidden = true; $('titleEdit').hidden = true;
+  inp.hidden = false; inp.focus(); inp.select();
+});
+function commitTitle(save) {
+  const inp = $('titleInput');
+  if (inp.hidden) return;
+  if (save) {
+    const t = inp.value.trim();
+    if (t && t !== room.title) send({ t: 'settings', title: t });
+  }
+  inp.hidden = true;
+  $('roomTitle').hidden = false;
+  $('titleEdit').hidden = !canCtl();
+}
+$('titleInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); commitTitle(true); }
+  else if (e.key === 'Escape') { e.preventDefault(); commitTitle(false); }
+});
+$('titleInput').addEventListener('blur', () => commitTitle(true));
 
 /* ------------------------------------------------------------------ */
 /* 재생목록 전광판                                                       */
@@ -700,9 +1012,10 @@ window.addEventListener('keydown', (e) => {
   if (tag === 'INPUT' || tag === 'TEXTAREA') return;
 
   if (e.key === 'Escape') {
-    if (!$('helpModal').hidden || !$('settingsModal').hidden) {
-      $('helpModal').hidden = true; $('settingsModal').hidden = true;
+    if (!$('helpModal').hidden || !$('playlistPanel').hidden) {
+      $('helpModal').hidden = true; $('playlistPanel').hidden = true;
     } else if (cam.mode === 'watch') setWatchMode(false);
+    else if (cam.mode === 'cinema') setCinema(false);
     return;
   }
   if (e.key === 'Enter') {
@@ -726,7 +1039,7 @@ const canvas = renderer.domElement;
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
 canvas.addEventListener('wheel', (e) => {
-  if (screen !== 'room' || cam.mode === 'watch') return;
+  if (screen !== 'room' || cam.mode !== 'lounge') return;
   e.preventDefault();
   cam.dist = Math.max(5, Math.min(22, cam.dist + Math.sign(e.deltaY) * 1.1));
 }, { passive: false });
@@ -744,12 +1057,13 @@ window.addEventListener('pointermove', (e) => {
   drag.lx = e.clientX; drag.ly = e.clientY;
   drag.moved += Math.abs(dx) + Math.abs(dy);
   if (drag.moved < 5) return;
+  if (cam.mode === 'cinema') return;           // 시네마 중엔 시점 고정
   if (cam.mode === 'watch') {
     cam.yaw -= dx * 0.004;
-    cam.look = Math.max(-0.6, Math.min(0.5, cam.look - dy * 0.003));
+    cam.look = Math.max(-0.6, Math.min(1.5, cam.look - dy * 0.003));
   } else {
     cam.yaw -= dx * 0.005;
-    cam.pitch = Math.max(0.35, Math.min(1.32, cam.pitch - dy * 0.004));
+    cam.pitch = Math.max(0.35, Math.min(2.95, cam.pitch - dy * 0.004));
   }
 });
 
@@ -759,6 +1073,7 @@ window.addEventListener('pointerup', (e) => {
   if (screen !== 'room') return;
   const quick = performance.now() - drag.t0 < 350 && drag.moved < 6;
   if (!quick) return;
+  if (cam.mode === 'cinema') return;           // 시네마 중엔 이동·화살 비활성
   if (drag.button === 2) shootAtPointer(e.clientX, e.clientY);
   else clickFloor(e.clientX, e.clientY);
 });
@@ -923,20 +1238,89 @@ function jump() {
   me.grounded = false;
 }
 
+/* 보기 모드 버튼(드롭다운)의 상태를 갱신 */
+function updateViewUI() {
+  const mode = cam.mode;
+  const btn = $('viewBtn');
+  btn.classList.toggle('on', mode !== 'lounge');
+  btn.textContent = (mode === 'watch' ? '1인칭 시점' : mode === 'cinema' ? '전체화면' : '3인칭 시점') + ' ▾';
+  $('viewDrop').querySelectorAll('button[data-view]').forEach((b) => {
+    b.classList.toggle('active',
+      (b.dataset.view === 'first' && mode === 'watch') ||
+      (b.dataset.view === 'third' && mode === 'lounge') ||
+      (b.dataset.view === 'cinema' && mode === 'cinema'));
+  });
+}
+
 function setWatchMode(on) {
   if (on === (cam.mode === 'watch')) return;
+  if (on && cam.mode === 'cinema') {        // 시네마와 겹치지 않게 먼저 해제
+    document.body.classList.remove('cinema');
+    exitFS();
+  }
   cam.mode = on ? 'watch' : 'lounge';
-  $('watchBtn').classList.toggle('on', on);
-  $('watchBtn').textContent = on ? '시청 모드 끄기' : '시청 모드';
   document.body.classList.toggle('watching', on);
   if (on) {
     const t = world.tvTransform;
     cam.yaw = Math.atan2(t.x - me.x, t.z - me.z);
     cam.look = 0.05;
-    toast('시청 모드 — 드래그로 둘러보기, V 또는 Esc 로 나가기', 3600);
+    toast('1인칭 시점 — 드래그로 둘러보기, V 또는 Esc 로 나가기', 3600);
+  } else {
+    // 라운지 뷰는 카메라가 아바타를 '마주 보는' 구조라, 시청 모드에서 보던 방향을
+    // 그대로 바라보려면 공전 각을 180° 돌려 준다.
+    cam.yaw += Math.PI;
+  }
+  updateViewUI();
+}
+
+/* 보기 모드 드롭다운 */
+const viewBtn = $('viewBtn'), viewDrop = $('viewDrop');
+function openView(open) { viewDrop.hidden = !open; viewBtn.classList.toggle('open', open); }
+viewBtn.addEventListener('click', (e) => { e.stopPropagation(); openView(viewDrop.hidden); });
+viewDrop.addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-view]');
+  if (!b) return;
+  const v = b.dataset.view;
+  if (v === 'first') setWatchMode(true);
+  else if (v === 'third') { if (cam.mode === 'watch') setWatchMode(false); else if (cam.mode === 'cinema') setCinema(false); }
+  else if (v === 'cinema') setCinema(true);
+  openView(false);
+});
+document.addEventListener('click', () => openView(false));
+
+/* 전체화면(시네마) — 유튜브 영상이 화면을 가득 채우도록 카메라가 TV 를 정면에서
+ * 꽉 차게 프레이밍한다. (iframe 을 옮기면 재생이 끊기므로 기존 3D 파이프라인을 그대로 쓴다)
+ * 동시에 브라우저 전체화면도 켜 실제로 화면 전체를 채운다. */
+function requestFS() {
+  const el = document.documentElement;
+  const req = el.requestFullscreen || el.webkitRequestFullscreen;
+  if (req && !document.fullscreenElement && !document.webkitFullscreenElement) {
+    try { req.call(el); } catch (e) { /* ignore */ }
   }
 }
-$('watchBtn').addEventListener('click', () => setWatchMode(cam.mode !== 'watch'));
+function exitFS() {
+  const exit = document.exitFullscreen || document.webkitExitFullscreen;
+  if (exit && (document.fullscreenElement || document.webkitFullscreenElement)) {
+    try { exit.call(document); } catch (e) { /* ignore */ }
+  }
+}
+function setCinema(on) {
+  const want = !!on;
+  if (want === (cam.mode === 'cinema')) return;
+  if (want && cam.mode === 'watch') setWatchMode(false);   // 시청 모드와 겹치지 않게
+  cam.mode = want ? 'cinema' : 'lounge';
+  document.body.classList.toggle('cinema', want);
+  if (want) { toast('전체화면 — 영상이 화면을 채웁니다. Esc 로 나가기', 3200); requestFS(); }
+  else { exitFS(); }
+  updateViewUI();
+}
+function onFsChange() {
+  const on = !!(document.fullscreenElement || document.webkitFullscreenElement);
+  // 브라우저 전체화면을 Esc/F11 로 빠져나오면 시네마 모드도 함께 해제
+  if (!on && cam.mode === 'cinema') setCinema(false);
+}
+document.addEventListener('fullscreenchange', onFsChange);
+document.addEventListener('webkitfullscreenchange', onFsChange);
 
 /* 터치 기기용 — 키보드가 없는 환경에서 점프와 화살 */
 $('touchJump').addEventListener('click', (e) => { e.preventDefault(); jump(); });
@@ -976,9 +1360,9 @@ function update(dt, now) {
     if (turn) cam.yaw += turn * TURN_RATE * dt;
     if (tilt) {
       if (cam.mode === 'watch') {
-        cam.look = Math.max(-0.6, Math.min(0.5, cam.look + tilt * LOOK_RATE * dt));
+        cam.look = Math.max(-0.6, Math.min(1.5, cam.look + tilt * LOOK_RATE * dt));
       } else {
-        cam.pitch = Math.max(0.35, Math.min(1.32, cam.pitch + tilt * TILT_RATE * dt));
+        cam.pitch = Math.max(0.35, Math.min(2.95, cam.pitch + tilt * TILT_RATE * dt));
       }
     }
   }
@@ -1037,36 +1421,71 @@ function update(dt, now) {
   /* 카메라 */
   const aim = new THREE.Vector3();
   const pos = new THREE.Vector3();
-  if (cam.mode === 'watch') {
+  if (cam.mode === 'cinema') {
+    // TV 를 정면에서 화면 가득(cover) 프레이밍한다
+    const T = R.TV, tv = world.tvTransform;
+    const vhalf = Math.tan((camera.fov * Math.PI / 180) / 2);
+    const dV = (T.h / 2) / vhalf;
+    const dH = (T.w / 2) / (vhalf * camera.aspect);
+    const d = Math.min(dV, dH) * 0.995;
+    pos.set(tv.x + tv.nx * d, tv.y, tv.z + tv.nz * d);
+    aim.set(tv.x, tv.y, tv.z);
+  } else if (cam.mode === 'watch') {
+    // 구면 좌표 — 수평 거리를 cos(look) 으로 줄여야 실제로 위/아래를 끝까지 볼 수 있다
+    const cl = Math.cos(cam.look);
     pos.set(me.x, 1.56 + me.y, me.z);
     aim.set(
-      me.x + Math.sin(cam.yaw) * 4,
+      me.x + cl * Math.sin(cam.yaw) * 4,
       1.56 + me.y + Math.sin(cam.look) * 4,
-      me.z + Math.cos(cam.yaw) * 4
+      me.z + cl * Math.cos(cam.yaw) * 4
     );
   } else {
-    aim.set(me.x, 1.05 + me.y * 0.6, me.z);
-    const sp = Math.sin(cam.pitch), cp = Math.cos(cam.pitch);
+    // 라운지(3인칭) — 공전하며 내려다보다가, 수평을 넘기면 시선을 위로 들어 천장까지 본다
+    const base = 1.05 + me.y * 0.6;
+    const HORIZON = Math.PI / 2 - 0.02;
+    const pOrbit = Math.min(cam.pitch, HORIZON);         // 공전 각은 수평까지만
+    const sp = Math.sin(pOrbit), cp = Math.cos(pOrbit);
     pos.set(
       me.x + cam.dist * sp * Math.sin(cam.yaw),
-      1.05 + me.y * 0.6 + cam.dist * cp,
+      base + cam.dist * cp,
       me.z + cam.dist * sp * Math.cos(cam.yaw)
     );
+    const upAngle = Math.min(1.4, Math.max(0, cam.pitch - HORIZON));   // 수평 너머 올려다보는 각
+    aim.set(me.x, base + Math.tan(upAngle) * cam.dist, me.z);
   }
   const k = 1 - Math.pow(0.0015, dt);
-  camPos.lerp(pos, cam.mode === 'watch' ? Math.min(1, k * 1.6) : k);
-  camAim.lerp(aim, cam.mode === 'watch' ? Math.min(1, k * 1.6) : k);
+  // 드래그 중에는 즉시 따라가 관성(가속도) 없이 1:1 로 돌게 한다
+  const follow = drag.on ? 1 : (cam.mode === 'lounge' ? k : Math.min(1, k * 1.6));
+  camPos.lerp(pos, follow);
+  camAim.lerp(aim, follow);
   camera.position.copy(camPos);
   camera.lookAt(camAim);
 
-  if (myAvatar) myAvatar.update(me, dt, now / 1000, cam.mode === 'watch');
+  // 시선(카메라 회전)에 따라 고개를 돌린다 — 몸 기준 상대 각도로 계산
+  {
+    let lookYaw, lookPitch;
+    if (cam.mode === 'watch') { lookYaw = cam.yaw; lookPitch = cam.look; }
+    else if (cam.mode === 'cinema') {
+      // 시네마 중엔 내 아바타가 TV 를 바라보게 (다른 사람 화면에서 보임)
+      lookYaw = Math.atan2(world.tvTransform.x - me.x, world.tvTransform.z - me.z);
+      lookPitch = 0;
+    } else { lookYaw = cam.yaw + Math.PI; lookPitch = cam.pitch - Math.PI / 2; }
+    let ry = lookYaw - me.dir;
+    while (ry > Math.PI) ry -= Math.PI * 2;
+    while (ry < -Math.PI) ry += Math.PI * 2;
+    me.hy = Math.max(-1.3, Math.min(1.3, ry));
+    me.hp = Math.max(-0.55, Math.min(0.55, -lookPitch));
+  }
+
+  if (myAvatar) myAvatar.update(me, dt, now / 1000, cam.mode !== 'lounge');
   for (const g of others.values()) g.av.update(g, dt, now / 1000, false);
 
   if (now - sendAt > 90) {
     sendAt = now;
     send({
       t: 'm', x: toNet(me.x), y: toNet(me.z),
-      dir: Math.round(me.dir * 100) / 100, st: me.st, h: toNet(me.y)
+      dir: Math.round(me.dir * 100) / 100, st: me.st, h: toNet(me.y),
+      hy: Math.round(me.hy * 100) / 100, hp: Math.round(me.hp * 100) / 100
     });
   }
 }
