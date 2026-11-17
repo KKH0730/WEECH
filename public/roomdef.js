@@ -96,14 +96,25 @@ const ROOM3D = (function () {
     { id: 'standB', type: 'speaker', x: 8.6, z: -7.2, rot: -0.35, w: 0.55, d: 0.55 }
   ];
 
-  const lamps = [
-    { x: -9.6, z: -3.0, h: 1.5 },
-    { x: 9.6, z: -3.0, h: 1.5 },
-    { x: -9.6, z: 2.0, h: 1.5 },
-    { x: 9.6, z: 2.0, h: 1.5 },
-    { x: -3.2, z: 7.0, h: 1.3 },
-    { x: 3.2, z: 7.0, h: 1.3 }
+  /* ---- 간접 조명 --------------------------------------------------
+   *  세워 두는 스탠드 대신 건축 조명만 쓴다. 바닥에 장애물이 없어진다.
+   *    천장 코브 : 벽에서 COVE.inset 만큼 들어온 자리에 띠를 두르고 천장을 비춘다
+   *    하단 스트립 : 영화관 통로등처럼 벽 아래를 따라 낮고 따뜻하게 깔린다
+   * ------------------------------------------------------------------ */
+  const COVE = { inset: 0.75, y: H - 0.3, w: 0.14 };       // 천장 코브 띠
+  const STRIP = { y: 0.1, h: 0.055, inset: 0.05 };          // 하단 간접 스트립
+
+  // 실제 광원 자리 (너무 많으면 느려지므로 최소한으로)
+  const CEIL_LIGHTS = [
+    { x: -5.5, z: -4.0 }, { x: 5.5, z: -4.0 },
+    { x: -5.5, z: 4.0 }, { x: 5.5, z: 4.0 }
   ];
+  const FLOOR_LIGHTS = [
+    { x: 0, z: -D / 2 + 0.5 }, { x: 0, z: D / 2 - 0.5 },
+    { x: -W / 2 + 0.5, z: 0 }, { x: W / 2 - 0.5, z: 0 }
+  ];
+
+  const lamps = [];   // 스탠드 없음 (옛 코드 호환용)
 
   const spawn = { x: 0, z: 3.6 };   // 두 자리 사이, TV 를 마주 보는 통로
 
@@ -121,7 +132,7 @@ const ROOM3D = (function () {
   furniture.forEach((f) => {
     solids.push({ x: f.x, z: f.z, w: f.w, d: f.d, rot: f.rot, top: TOP[f.type] || 1.0, id: f.id });
   });
-  lamps.forEach((l, i) => solids.push({ x: l.x, z: l.z, w: 0.46, d: 0.46, rot: 0, top: 1.55, id: 'lamp' + i }));
+  // 스탠드가 없으므로 바닥을 막는 것은 가구뿐이다
 
   /* 점 (x,z) 를 사각형 s 의 로컬 좌표로 */
   function toLocal(s, x, z) {
@@ -207,6 +218,7 @@ const ROOM3D = (function () {
     placeOnWall: placeOnWall,
     TV: TV, BOARD: BOARD, plaques: plaques, frames: frames,
     CARPET: CARPET, CARPETS: CARPETS, furniture: furniture, lamps: lamps, solids: solids,
+    COVE: COVE, STRIP: STRIP, CEIL_LIGHTS: CEIL_LIGHTS, FLOOR_LIGHTS: FLOOR_LIGHTS,
     seats: seats, spawn: spawn, collide: collide, moveVector: moveVector,
     groundAt: groundAt, TOP: TOP, STEP: STEP,
     BOX_DEPTH: BOX_DEPTH, PLATE_DEPTH: PLATE_DEPTH, FACE_Z: FACE_Z

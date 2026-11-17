@@ -105,7 +105,7 @@ export function buildScene() {
     collidables.push(m);
   });
 
-  const ceil = new THREE.Mesh(new THREE.PlaneGeometry(R.W, R.D), mat(0x1a1722, 1));
+  const ceil = new THREE.Mesh(new THREE.PlaneGeometry(R.W, R.D), mat(0x2c2636, 0.95));
   ceil.rotation.x = Math.PI / 2;
   ceil.position.y = R.H;
   scene.add(ceil);
@@ -344,34 +344,55 @@ export function buildScene() {
     scene.add(g);
   });
 
-  /* ---------------- 무드등 ---------------- */
-  R.lamps.forEach((l) => {
-    const g = new THREE.Group();
-    g.position.set(l.x, 0, l.z);
-    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.035, l.h, 10), mat(0x3a3242, 0.6, 0.3));
-    pole.position.y = l.h / 2; g.add(pole);
-    const base = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.2, 0.05, 16), mat(0x2b2533, 0.7));
-    base.position.y = 0.025; g.add(base);
-    const shade = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.19, 0.26, 0.3, 18, 1, true),
-      new THREE.MeshStandardMaterial({
-        color: 0xffd9a0, emissive: 0xffb866, emissiveIntensity: 0.9,
-        roughness: 0.6, side: THREE.DoubleSide
-      })
-    );
-    shade.position.y = l.h + 0.1; g.add(shade);
-    const light = new THREE.PointLight(0xffb470, 5.5, 7.5, 2);
-    light.position.set(0, l.h + 0.05, 0);
-    g.add(light);
-    api.lampLights.push(light);
-    g.traverse((o) => { if (o.isMesh) collidables.push(o); });
-    scene.add(g);
-    const sh = blob(0.5, 0.4); sh.position.set(l.x, 0.013, l.z); scene.add(sh);
+  /* ---------------- 천장 코브 조명 ---------------- */
+  const C = R.COVE;
+  const coveMat = new THREE.MeshBasicMaterial({ color: 0xffe6c4 });
+  const coveLipMat = mat(0x241f2c, 0.9);
+  const ci = C.inset;
+  [
+    { w: R.W - ci * 2, d: C.w, x: 0, z: -R.D / 2 + ci },
+    { w: R.W - ci * 2, d: C.w, x: 0, z: R.D / 2 - ci },
+    { w: C.w, d: R.D - ci * 2, x: -R.W / 2 + ci, z: 0 },
+    { w: C.w, d: R.D - ci * 2, x: R.W / 2 - ci, z: 0 }
+  ].forEach((b) => {
+    // 빛나는 띠
+    scene.add(box(b.w, 0.05, b.d, coveMat, b.x, C.y, b.z));
+    // 아래를 가리는 턱 — 광원이 직접 보이지 않고 천장만 밝아 보이게
+    scene.add(box(b.w + 0.1, 0.16, b.d + 0.1, coveLipMat, b.x, C.y - 0.12, b.z));
+  });
+
+  R.CEIL_LIGHTS.forEach((p) => {
+    const l = new THREE.PointLight(0xfff0dc, 22, 18, 2);
+    l.position.set(p.x, C.y + 0.18, p.z);
+    scene.add(l);
+    api.lampLights.push(l);
+  });
+
+  /* ---------------- 하단 간접 조명 (영화관 통로등) ---------------- */
+  const S = R.STRIP;
+  const stripMat = new THREE.MeshBasicMaterial({ color: 0xffb066 });
+  const si = S.inset;
+  [
+    { w: R.W - 0.3, d: 0.05, x: 0, z: -R.D / 2 + si },
+    { w: R.W - 0.3, d: 0.05, x: 0, z: R.D / 2 - si },
+    { w: 0.05, d: R.D - 0.3, x: -R.W / 2 + si, z: 0 },
+    { w: 0.05, d: R.D - 0.3, x: R.W / 2 - si, z: 0 }
+  ].forEach((b) => {
+    scene.add(box(b.w, S.h, b.d, stripMat, b.x, S.y, b.z));
+    // 위를 살짝 덮어 광원이 직접 보이지 않게
+    scene.add(box(b.w + 0.04, 0.03, b.d + 0.06, mat(0x1d1826, 0.85), b.x, S.y + S.h / 2 + 0.02, b.z));
+  });
+
+  R.FLOOR_LIGHTS.forEach((p) => {
+    const l = new THREE.PointLight(0xff9e52, 6, 9, 2);
+    l.position.set(p.x, S.y + 0.1, p.z);
+    scene.add(l);
+    api.lampLights.push(l);
   });
 
   /* ---------------- 조명 ---------------- */
-  scene.add(new THREE.AmbientLight(0x4a4560, 1.1));
-  const hemi = new THREE.HemisphereLight(0x6a6a90, 0x3a2c28, 0.5);
+  scene.add(new THREE.AmbientLight(0x3f3a52, 0.75));   // 간접 조명이 주광이므로 환경광은 낮춘다
+  const hemi = new THREE.HemisphereLight(0x7a7aa4, 0x4a3a30, 0.45);
   scene.add(hemi);
 
   api.update = function (t, tvOn) {
