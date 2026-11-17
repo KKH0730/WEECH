@@ -191,6 +191,7 @@ export function makeAvatar(opts) {
     update(p, dt, t, hidden) {
       root.visible = !hidden;
       root.position.x = p.x;
+      root.position.y = p.y || 0;
       root.position.z = p.z;
       root.rotation.y = p.dir;
 
@@ -201,14 +202,27 @@ export function makeAvatar(opts) {
       legR.rotation.x = walking ? -sw * 0.6 : 0;
       armL.rotation.x = walking ? -sw * 0.5 : 0;
       armR.rotation.x = walking ? sw * 0.5 : 0;
-      body.position.y = walking ? Math.abs(Math.sin(stride)) * 0.045 : Math.sin(t * 1.6 + ph) * 0.012;
+      const air = (p.y || 0) > 0.03;
+      body.position.y = air ? 0.02 : (walking ? Math.abs(Math.sin(stride)) * 0.045 : Math.sin(t * 1.6 + ph) * 0.012);
+      if (air) {                                 // 공중에서는 다리를 모으고 팔을 든다
+        legL.rotation.x = -0.35; legR.rotation.x = 0.2;
+        armL.rotation.x = -0.9; armR.rotation.x = -0.9;
+      }
       head.rotation.z = walking ? sw * 0.04 : Math.sin(t * 1.2 + ph) * 0.02;
 
       // 눈 깜빡임
       const blink = Math.sin(t * 0.8 + ph * 3) > 0.985 ? 0.12 : 1;
       eyeL.scale.y = eyeR.scale.y = blink;
 
-      if (ring) ring.material.opacity = 0.55 + Math.sin(t * 2.4) * 0.25;
+      const h = p.y || 0;
+      shadow.position.y = 0.014 - h;             // 월드 기준으로는 늘 바닥
+      const sh = Math.max(0.35, 1 - h * 0.55);
+      shadow.scale.set(sh, sh, 1);
+      shadow.material.opacity = Math.max(0.25, 1 - h * 0.5);
+      if (ring) {
+        ring.position.y = 0.018 - h;
+        ring.material.opacity = (0.55 + Math.sin(t * 2.4) * 0.25) * (h > 0.03 ? 0.4 : 1);
+      }
 
       if (bubble) {
         bubbleT += dt;

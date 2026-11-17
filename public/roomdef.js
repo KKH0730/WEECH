@@ -99,37 +99,73 @@ const ROOM3D = (function () {
 
   const spawn = { x: 0, z: 3.6 };   // 두 자리 사이, TV 를 마주 보는 통로
 
-  /* ---- 충돌 (xz 평면의 사각형들) --------------------------------- */
+  /* ---- 충돌 ------------------------------------------------------
+   *  가구를 '회전한 사각형(OBB)' 그대로 다룬다. 외접 사각형으로 근사하면
+   *  비스듬한 의자 주변에 보이지 않는 벽이 생겨 걸리적거린다.
+   *  top = 그 가구의 올라설 수 있는 높이. 그보다 높이 떠 있으면 통과한다.
+   * ---------------------------------------------------------------- */
+  const TOP = {            // 가구별 윗면 높이 (m)
+    sofa: 0.45, chair: 0.46, table: 0.46,
+    shelf: 1.55, plant: 1.10, speaker: 1.05
+  };
+
   const solids = [];
   furniture.forEach((f) => {
-    // 회전한 가구는 넉넉한 외접 사각형으로 근사한다
-    const c = Math.abs(Math.cos(f.rot)), s = Math.abs(Math.sin(f.rot));
-    const w = f.w * c + f.d * s, d = f.w * s + f.d * c;
-    solids.push({ x: f.x, z: f.z, w: w, d: d, id: f.id });
+    solids.push({ x: f.x, z: f.z, w: f.w, d: f.d, rot: f.rot, top: TOP[f.type] || 1.0, id: f.id });
   });
-  lamps.forEach((l, i) => solids.push({ x: l.x, z: l.z, w: 0.5, d: 0.5, id: 'lamp' + i }));
+  lamps.forEach((l, i) => solids.push({ x: l.x, z: l.z, w: 0.46, d: 0.46, rot: 0, top: 1.55, id: 'lamp' + i }));
 
-  function collide(x, z, r) {
-    // 가구에서 밀어낸 결과가 벽을 뚫을 수 있으므로 몇 번 번갈아 풀어 준다
+  /* 점 (x,z) 를 사각형 s 의 로컬 좌표로 */
+  function toLocal(s, x, z) {
+    const dx = x - s.x, dz = z - s.z;
+    if (!s.rot) return { x: dx, z: dz };
+    const c = Math.cos(s.rot), sn = Math.sin(s.rot);
+    return { x: dx * c + dz * sn, z: -dx * sn + dz * c };
+  }
+  function toWorld(s, lx, lz) {
+    if (!s.rot) return { x: s.x + lx, z: s.z + lz };
+    const c = Math.cos(s.rot), sn = Math.sin(s.rot);
+    return { x: s.x + lx * c - lz * sn, z: s.z + lx * sn + lz * c };
+  }
+
+  /* 발밑 바닥 높이 — 가구 위에 올라서 있으면 그 윗면 */
+  function groundAt(x, z) {
+    let g = 0;
+    for (let i = 0; i < solids.length; i++) {
+      const s = solids[i];
+      const l = toLocal(s, x, z);
+      if (Math.abs(l.x) < s.w / 2 && Math.abs(l.z) < s.d / 2 && s.top > g) g = s.top;
+    }
+    return g;
+  }
+
+  const STEP = 0.12;   // 이 정도 턱은 그냥 넘어간다
+
+  /* y = 발바닥 높이. 가구 윗면보다 높이 떠 있으면 그 가구는 통과한다. */
+  function collide(x, z, r, y) {
+    const feet = y || 0;
     for (let pass = 0; pass < 3; pass++) {
       x = Math.max(BOUND.x0 + r, Math.min(BOUND.x1 - r, x));
       z = Math.max(BOUND.z0 + r, Math.min(BOUND.z1 - r, z));
       let moved = false;
       for (let i = 0; i < solids.length; i++) {
         const s = solids[i];
-        const left = s.x - s.w / 2 - r, right = s.x + s.w / 2 + r;
-        const front = s.z - s.d / 2 - r, back = s.z + s.d / 2 + r;
-        if (x > left && x < right && z > front && z < back) {
-          const dl = x - left, dr = right - x, df = z - front, db = back - z;
+        if (s.top <= feet + STEP) continue;        // 뛰어넘는 중이거나 이미 위에 올라섬
+        const l = toLocal(s, x, z);
+        const hw = s.w / 2 + r, hd = s.d / 2 + r;
+        if (l.x > -hw && l.x < hw && l.z > -hd && l.z < hd) {
+          const dl = l.x + hw, dr = hw - l.x, df = l.z + hd, db = hd - l.z;
           const m = Math.min(dl, dr, df, db);
-          if (m === dl) x = left; else if (m === dr) x = right;
-          else if (m === df) z = front; else z = back;
+          let nx = l.x, nz = l.z;
+          if (m === dl) nx = -hw; else if (m === dr) nx = hw;
+          else if (m === df) nz = -hd; else nz = hd;
+          const w = toWorld(s, nx, nz);
+          x = w.x; z = w.z;
           moved = true;
         }
       }
       if (!moved) break;
     }
-    // 마지막엔 반드시 방 안에 둔다
     x = Math.max(BOUND.x0 + r, Math.min(BOUND.x1 - r, x));
     z = Math.max(BOUND.z0 + r, Math.min(BOUND.z1 - r, z));
     return { x: x, z: z };
@@ -163,7 +199,8 @@ const ROOM3D = (function () {
     placeOnWall: placeOnWall,
     TV: TV, BOARD: BOARD, plaques: plaques, frames: frames,
     CARPET: CARPET, CARPETS: CARPETS, furniture: furniture, lamps: lamps, solids: solids,
-    seats: seats, spawn: spawn, collide: collide, moveVector: moveVector
+    seats: seats, spawn: spawn, collide: collide, moveVector: moveVector,
+    groundAt: groundAt, TOP: TOP, STEP: STEP
   };
 })();
 

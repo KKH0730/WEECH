@@ -568,6 +568,7 @@ function handleMessage(entry, m, now) {
       user.y = clampNum(m.y, -2000, 4000);
       user.dir = clampNum(m.dir, -10, 10);
       user.st = (m.st | 0) & 3;
+      user.h = clampNum(m.h, 0, 400);          // 점프 높이 (cm)
       return;
 
     case 'chat': {
@@ -672,7 +673,7 @@ function admit(entry, room, name) {
   const u = {
     id: nextUserId++, name: name, conn: entry.conn, room: room,
     x: 600 + (Math.random() - 0.5) * 240, y: 760 + (Math.random() - 0.5) * 80,
-    dir: -Math.PI / 2, st: 0, joinedAt: Date.now(),
+    dir: -Math.PI / 2, st: 0, h: 0, joinedAt: Date.now(),
     lastChat: 0, lastArrow: 0
   };
   room.users.set(u.id, u);
@@ -689,7 +690,7 @@ setInterval(() => {
     if (!r.users.size) continue;
     const arr = [];
     for (const u of r.users.values()) {
-      arr.push([u.id, Math.round(u.x), Math.round(u.y), Math.round(u.dir * 100) / 100, u.st, u.name]);
+      arr.push([u.id, Math.round(u.x), Math.round(u.y), Math.round(u.dir * 100) / 100, u.st, u.name, Math.round(u.h || 0)]);
     }
     const msg = JSON.stringify({ t: 's', u: arr });
     for (const u of r.users.values()) u.conn.send(msg);

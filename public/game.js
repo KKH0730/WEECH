@@ -55,7 +55,10 @@ let ws = null, retry = null, myId = 0;
 const outbox = [];
 let lastJoin = null;
 
-const me = { id: 0, name: '', x: R.spawn.x, z: R.spawn.z, dir: Math.PI, st: 0 };
+const me = {
+  id: 0, name: '', x: R.spawn.x, z: R.spawn.z, dir: Math.PI, st: 0,
+  y: 0, vy: 0, grounded: true
+};
 const others = new Map();
 let myAvatar = null;
 let room = null, isHost = false;
@@ -268,10 +271,14 @@ function connect() {
           let g = others.get(id);
           if (!g) g = addOther({ id: id, name: a[5], x: a[1], y: a[2] });
           g.tx = a[1] / 100; g.tz = a[2] / 100; g.tdir = a[3]; g.st = a[4];
+          g.ty = (a[6] || 0) / 100;
           if (a[5] && a[5] !== g.name) { g.name = a[5]; g.av.setName(a[5]); }
         });
         for (const id of Array.from(others.keys())) if (!seen.has(id)) removeOther(id);
-        $('roomPeople').textContent = (m.u ? m.u.length : 1) + '명';
+        peopleCache = (m.u || []).map((a) => ({ id: a[0], name: a[5] }));
+        peopleCache.sort((a, b) => (b.id === myId) - (a.id === myId) || a.id - b.id);
+        $('roomPeople').textContent = peopleCache.length || 1;
+        renderPeople();
         break;
       }
 
@@ -289,6 +296,7 @@ function connect() {
         isHost = (m.id === myId);
         if (room) room.hostId = m.id;
         applyHostUI();
+        renderPeople();
         logMsg(esc(m.name) + ' 님이 방장이 되었습니다.', 'sys');
         if (isHost) toast('방장이 되었습니다. 재생을 조작할 수 있습니다.', 3400);
         break;
@@ -341,7 +349,7 @@ function addOther(u) {
   const g = {
     id: u.id, name: u.name || '익명',
     x: u.x / 100, z: u.y / 100, tx: u.x / 100, tz: u.y / 100,
-    dir: Math.PI, tdir: Math.PI, st: 0, av: av
+    dir: Math.PI, tdir: Math.PI, st: 0, y: 0, ty: 0, av: av
   };
   others.set(u.id, g);
   return g;
@@ -381,7 +389,7 @@ function enterRoom() {
   applyHostUI();
   applyPlayback();
   drawBoard();
-  logMsg('방에 들어왔습니다. <b>?</b> 로 조작 방법, <b>V</b> 로 시청 모드.', 'sys');
+  logMsg('방에 들어왔습니다. <b>Space</b> 점프 · <b>V</b> 시청 모드 · <b>?</b> 전체 조작.', 'sys');
 }
 
 function hostName() {
@@ -409,11 +417,78 @@ $('leaveBtn').addEventListener('click', () => {
   if (confirm('방에서 나갈까요?')) send({ t: 'leave' });
 });
 
+/* 클립보드 — 안 되면 옛 방식으로 */
+function copyText(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    return navigator.clipboard.writeText(text).then(() => true).catch(() => fallbackCopy(text));
+  }
+  return Promise.resolve(fallbackCopy(text));
+}
+function fallbackCopy(text) {
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch (e) { return false; }
+}
+
+const inviteUrl = () => location.origin + '/?r=' + (room ? room.code : '');
+
+$('codeBtn').addEventListener('click', () => {
+  if (!room) return;
+  copyText(room.code).then((ok) => {
+    if (!ok) { toast('복사하지 못했습니다. 코드: ' + room.code, 4000); return; }
+    const chip = $('codeBtn');
+    chip.classList.add('copied');
+    setTimeout(() => chip.classList.remove('copied'), 1200);
+    toast('입장 코드 ' + room.code + ' 를 복사했습니다', 2400);
+  });
+});
+
+$('inviteBtn').addEventListener('click', () => {
+  if (!room) return;
+  const url = inviteUrl();
+  copyText(url).then((ok) => {
+    toast(ok ? '초대 링크를 복사했습니다 — 붙여넣기만 하면 바로 입장합니다' : url, ok ? 3200 : 6000);
+  });
+});
+
+/* 참여자 목록 — 기본은 접혀 있다 */
+let peopleOpen = false;
+let peopleCache = [];
+
+$('peopleToggle').addEventListener('click', () => {
+  peopleOpen = !peopleOpen;
+  $('peopleToggle').classList.toggle('open', peopleOpen);
+  $('peopleList').hidden = !peopleOpen;
+  if (peopleOpen) renderPeople();
+});
+
+function renderPeople() {
+  if (!peopleOpen) return;
+  const box = $('peopleList');
+  if (!peopleCache.length) { box.innerHTML = '<div class="person"><span class="nm dim">—</span></div>'; return; }
+  box.innerHTML = peopleCache.map((p) => {
+    const c = colorOf(p.id)[0].toString(16).padStart(6, '0');
+    const badges =
+      (room && room.hostId === p.id ? '<span class="badge host">방장</span>' : '') +
+      (p.id === myId ? '<span class="badge me">나</span>' : '');
+    return '<div class="person"><span class="swatch" style="background:#' + c + '"></span>' +
+           '<span class="nm">' + esc(p.name || '익명') + '</span>' + badges + '</div>';
+  }).join('');
+}
+
 function applyHostUI() {
   $('hostCtl').hidden = !isHost;
   $('guestNote').hidden = isHost;
   $('settingsBtn').hidden = !isHost;
-  $('roomHost').textContent = '방장 ' + (room && room.hostId === myId ? '나' : hostName());
+  $('roomHost').textContent = (room && room.hostId === myId ? '나' : hostName());
 }
 
 /* ------------------------------------------------------------------ */
@@ -580,8 +655,9 @@ window.addEventListener('keydown', (e) => {
   }
   if (e.key === 'Enter') { chatInput.focus(); e.preventDefault(); return; }
   if (e.key === '?' || e.key === '/') { $('helpModal').hidden = false; e.preventDefault(); return; }
-  if (e.key === ' ') { shootForward(); e.preventDefault(); return; }
+  if (e.key === ' ') { jump(); e.preventDefault(); return; }
   const k = e.key.toLowerCase();
+  if (k === 'f') { shootForward(); e.preventDefault(); return; }
   if (k === 'v') { setWatchMode(cam.mode !== 'watch'); return; }
   keys[k] = true;
   if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].indexOf(k) >= 0) e.preventDefault();
@@ -769,6 +845,12 @@ function updateDarts(dt) {
 /* ------------------------------------------------------------------ */
 /* 시청 모드 (1인칭)                                                     */
 /* ------------------------------------------------------------------ */
+function jump() {
+  if (screen !== 'room' || !me.grounded) return;
+  me.vy = JUMP_V;
+  me.grounded = false;
+}
+
 function setWatchMode(on) {
   if (on === (cam.mode === 'watch')) return;
   cam.mode = on ? 'watch' : 'lounge';
@@ -789,6 +871,8 @@ $('helpBtn').addEventListener('click', () => { $('helpModal').hidden = false; })
 /* 갱신                                                                 */
 /* ------------------------------------------------------------------ */
 const SPEED = 3.2;                 // 방이 넓어져 걸음을 조금 빠르게
+const GRAVITY = 16;                // m/s²
+const JUMP_V = 4.6;                // 솟구치는 속도 → 최고 0.66m, 체공 0.58초
 const TURN_RATE = 1.7;             // 방향키 좌우 회전 (rad/s)
 const TILT_RATE = 1.0;             // 라운지 뷰 위아래
 const LOOK_RATE = 0.9;             // 시청 모드 위아래
@@ -842,17 +926,30 @@ function update(dt, now) {
     const l = Math.hypot(vx, vz) || 1;
     const nx = me.x + (vx / l) * SPEED * dt;
     const nz = me.z + (vz / l) * SPEED * dt;
-    const p = R.collide(nx, nz, 0.32);
+    const p = R.collide(nx, nz, 0.26, me.y);
     if (Math.abs(p.x - me.x) < 0.0005 && Math.abs(p.z - me.z) < 0.0005) moveTarget = null;
     me.x = p.x; me.z = p.z;
     me.dir = Math.atan2(vx, vz);
     me.st = 1;
   } else me.st = 0;
 
+  /* 점프 — 위아래 */
+  me.vy -= GRAVITY * dt;
+  me.y += me.vy * dt;
+  const ground = R.groundAt(me.x, me.z);
+  if (me.y <= ground) {                    // 착지
+    me.y = ground;
+    me.vy = 0;
+    me.grounded = true;
+  } else {
+    me.grounded = false;
+  }
+
   for (const g of others.values()) {
     const k = 1 - Math.pow(0.0001, dt);
     g.x += (g.tx - g.x) * k;
     g.z += (g.tz - g.z) * k;
+    g.y += (g.ty - g.y) * Math.min(1, dt * 18);
     let dd = g.tdir - g.dir;
     while (dd > Math.PI) dd -= Math.PI * 2;
     while (dd < -Math.PI) dd += Math.PI * 2;
@@ -865,18 +962,18 @@ function update(dt, now) {
   const aim = new THREE.Vector3();
   const pos = new THREE.Vector3();
   if (cam.mode === 'watch') {
-    pos.set(me.x, 1.56, me.z);
+    pos.set(me.x, 1.56 + me.y, me.z);
     aim.set(
       me.x + Math.sin(cam.yaw) * 4,
-      1.56 + Math.sin(cam.look) * 4,
+      1.56 + me.y + Math.sin(cam.look) * 4,
       me.z + Math.cos(cam.yaw) * 4
     );
   } else {
-    aim.set(me.x, 1.05, me.z);
+    aim.set(me.x, 1.05 + me.y * 0.6, me.z);
     const sp = Math.sin(cam.pitch), cp = Math.cos(cam.pitch);
     pos.set(
       me.x + cam.dist * sp * Math.sin(cam.yaw),
-      1.05 + cam.dist * cp,
+      1.05 + me.y * 0.6 + cam.dist * cp,
       me.z + cam.dist * sp * Math.cos(cam.yaw)
     );
   }
@@ -891,7 +988,10 @@ function update(dt, now) {
 
   if (now - sendAt > 90) {
     sendAt = now;
-    send({ t: 'm', x: toNet(me.x), y: toNet(me.z), dir: Math.round(me.dir * 100) / 100, st: me.st });
+    send({
+      t: 'm', x: toNet(me.x), y: toNet(me.z),
+      dir: Math.round(me.dir * 100) / 100, st: me.st, h: toNet(me.y)
+    });
   }
 }
 
@@ -923,6 +1023,17 @@ function frame(now) {
   }
 }
 requestAnimationFrame(frame);
+
+/* ?r=CODE 로 들어왔으면 코드를 채워 두고 안내한다 */
+(function fromInvite() {
+  const m = location.search.match(/[?&]r=([A-Za-z0-9]{1,8})/);
+  if (!m) return;
+  const code = m[1].toUpperCase();
+  $('joinCode').value = code;
+  $('inviteNote').textContent = '초대받은 방 ' + code + ' — 닉네임만 적고 입장하세요.';
+  $('inviteNote').hidden = false;
+  setTimeout(() => $('joinName').focus(), 100);
+})();
 
 cssHost.style.display = 'none';
 connect();

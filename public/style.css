@@ -289,3 +289,77 @@ body.watching::after{
 body.watching #topbar{opacity:.45;transition:opacity .4s;}
 body.watching #topbar:hover{opacity:1;}
 body.watching #chatlog{opacity:.6;}
+
+/* ───────────── 좌상단 방 정보 ───────────── */
+
+.room-id{display:flex;flex-direction:column;gap:6px;align-items:flex-start;}
+.room-id strong{font-size:16px;font-weight:700;max-width:46vw;}
+.room-id .meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.room-id .who{font-size:12px;color:var(--dim);}
+.room-id .who b{color:var(--ink);font-weight:500;}
+
+.codechip{
+  display:flex;align-items:center;gap:7px;
+  padding:4px 10px;border-radius:8px;
+  background:rgba(255,184,77,.14);border:1px solid rgba(255,184,77,.35);
+  color:var(--accent);transition:.15s;
+}
+.codechip:hover{background:rgba(255,184,77,.26);border-color:var(--accent);}
+.codechip .lbl{font-size:10.5px;color:rgba(255,184,77,.75);letter-spacing:.02em;}
+.codechip b{font-size:13.5px;font-weight:700;letter-spacing:.18em;color:#ffd79a;}
+.codechip .ico{font-size:12px;opacity:.6;}
+.codechip.copied{background:rgba(125,220,125,.2);border-color:#7ddc7d;}
+.codechip.copied b,.codechip.copied .lbl{color:#9cf09c;}
+
+.pill.tiny{height:26px;padding:0 10px;font-size:11.5px;}
+
+.invite-note{
+  margin:12px 0 0;padding:10px 13px;border-radius:9px;
+  background:rgba(255,184,77,.12);border:1px solid rgba(255,184,77,.3);
+  font-size:12.5px;color:#ffd79a;text-align:center;
+}
+.invite-note[hidden]{display:none;}
+
+/* ───────────── 참여자 목록 ───────────── */
+
+#people{position:absolute;left:16px;top:92px;width:214px;}
+#peopleToggle{
+  display:flex;align-items:center;gap:7px;width:100%;
+  padding:7px 11px;border-radius:10px;
+  background:var(--glass);border:1px solid var(--line);
+  color:var(--ink);font-size:12.5px;transition:.15s;
+  backdrop-filter:blur(10px);
+}
+#peopleToggle:hover{border-color:rgba(255,184,77,.45);}
+#peopleToggle .chev{font-size:10px;color:var(--dim);transition:transform .2s;}
+#peopleToggle.open .chev{transform:rotate(90deg);}
+#peopleToggle .ppl{font-size:13px;}
+#peopleToggle b{color:var(--accent);font-weight:700;font-size:13.5px;}
+#peopleToggle .cap{color:var(--faint);font-size:11px;}
+
+#peopleList{
+  pointer-events:auto;          /* 목록을 스크롤할 수 있게 */
+  margin-top:6px;max-height:40vh;overflow-y:auto;
+  padding:6px;border-radius:10px;
+  background:var(--glass);border:1px solid var(--line);
+  backdrop-filter:blur(10px);
+  animation:rise .18s ease both;
+}
+#peopleList[hidden]{display:none;}
+.person{
+  display:flex;align-items:center;gap:8px;
+  padding:6px 8px;border-radius:7px;font-size:12.5px;
+}
+.person:hover{background:rgba(255,255,255,.05);}
+.person .swatch{width:9px;height:9px;border-radius:50%;flex:none;}
+.person .nm{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.person .badge{
+  font-size:9.5px;font-weight:700;padding:1.5px 5px;border-radius:4px;flex:none;
+}
+.person .badge.host{background:rgba(255,184,77,.22);color:var(--accent);}
+.person .badge.me{background:rgba(255,255,255,.12);color:var(--dim);}
+
+@media (max-width:720px){
+  #people{width:170px;top:104px;}
+  .room-id strong{max-width:40vw;}
+}
