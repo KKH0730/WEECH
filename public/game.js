@@ -596,6 +596,7 @@ function connect() {
         if (!room) break;
         room.title = m.title; room.playlist = m.playlist;
         $('roomTitle').textContent = room.title;
+        updatePlTip();
         updateNowPlaying();
         drawBoard();
         renderPlTracks();
@@ -810,6 +811,7 @@ function enterRoom() {
   cam.yaw = 0; cam.pitch = 0.88; cam.dist = 12.5; cam.mode = 'lounge';
   camPos.set(me.x, 10, me.z + 10);
 
+  plTipOff = false;                  // 새 방에서는 다시 알려 준다
   $('peopleToggle').classList.toggle('open', peopleOpen);
   $('peopleList').hidden = !peopleOpen;
   headSig = ''; headCount = -1; peopleSig = '';
@@ -1203,6 +1205,23 @@ document.addEventListener('click', closePMenu);
 $('peopleList').addEventListener('scroll', closePMenu);
 addEventListener('resize', closePMenu);
 
+/* 재생목록이 비었다는 걸 ☰ 옆에서 알려 준다.
+ *  조작할 수 있는 사람에게만, 한 곡이라도 담기면 저절로 사라진다. */
+let plTipOff = false;        // 직접 닫았나 (방을 옮기면 다시 보여 준다)
+
+function updatePlTip() {
+  const el = $('plTip');
+  if (!el) return;
+  const empty = !(room && room.playlist && room.playlist.length);
+  el.hidden = !(empty && canCtl() && screen === 'room' && !plTipOff);
+}
+
+$('plTipX').addEventListener('click', (e) => {
+  e.stopPropagation();
+  plTipOff = true;
+  updatePlTip();
+});
+
 function applyHostUI() {
   const ctl = canCtl();
   $('hostCtl').hidden = !ctl;
@@ -1223,6 +1242,7 @@ function applyHostUI() {
   rt.classList.toggle('editable', ctl);
   rt.title = ctl ? '눌러서 방 제목 수정' : '';
   $('playerbar').classList.toggle('host-seek', ctl);
+  updatePlTip();
 }
 
 /* ------------------------------------------------------------------ */
@@ -1237,6 +1257,7 @@ function applyPlayback() {
   const it = currentItem();
   if (it) TV.setState(room, it.id);
   $('playBtn').textContent = room && room.playing ? '❚❚' : '▶';
+  updatePlTip();
   updateNowPlaying();
   drawBoard();
   renderPlTracks();
@@ -1876,10 +1897,13 @@ function updatePlHint() {
 
 function openPlaylist() {
   if (!canCtl() || !room) return;
+  plTipOff = true;                   // 찾아왔으니 안내는 접는다
+  updatePlTip();
   $('plAddInput').value = '';
   $('plAddHint').hidden = true;
   $('playlistPanel').hidden = false;   // 먼저 띄워야 renderPlTracks 가 그린다
   renderPlTracks();
+  updatePlPh();                        // 띄운 뒤에 재야 폭이 잡힌다 (숨어 있으면 0)
 }
 $('playlistBtn').addEventListener('click', () => {
   // 토글 — 열려 있으면 닫는다
@@ -1962,10 +1986,24 @@ function addTrack() {
   const links = currentIds().concat(v).join('\n');   // 기존 뒤에 덧붙인다
   send({ t: 'settings', links: links });
   $('plAddInput').value = '';
+  updatePlPh();
   $('plAddHint').hidden = true;
   toast(countLinks(v).p ? '재생목록을 펼치는 중…' : '추가하는 중…', 1800);
 }
+/* 겹쳐 둔 안내 글 — 뭔가 적으면 감추고, 칸에 다 들어가면 흐르지 않는다 */
+function updatePlPh() {
+  const ph = $('plAddPh'), inp = $('plAddInput');
+  if (!ph || !inp) return;
+  ph.hidden = !!inp.value;
+  if (ph.hidden) return;
+  const one = ph.firstElementChild;
+  // 한 벌이 칸보다 좁으면 흐를 필요가 없다
+  ph.classList.toggle('fits', !!one && one.scrollWidth <= ph.clientWidth);
+}
+
+$('plAddInput').addEventListener('input', updatePlPh);
 $('plAddInput').addEventListener('input', updatePlHint);
+addEventListener('resize', updatePlPh);
 $('plAddBtn').addEventListener('click', addTrack);
 $('plAddInput').addEventListener('keydown', (e) => {
   e.stopPropagation();

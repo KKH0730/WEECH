@@ -190,12 +190,19 @@
         <button id="fwd30" class="seekbtn" title="30초 앞으로">+30</button>
         <button id="nextBtn" title="다음 영상">⏭</button>
         <span class="vsep"></span>
-        <button id="playlistBtn" class="icon" title="재생목록 관리" hidden aria-label="재생목록">
-          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-            <line x1="3" y1="6" x2="15" y2="6"/><line x1="3" y1="12" x2="15" y2="12"/>
-            <line x1="3" y1="18" x2="11" y2="18"/><path d="M18 9v8"/><path d="M18 17a2 2 0 1 1-2-2" fill="currentColor"/>
-          </svg>
-        </button>
+        <span id="plWrap">
+          <button id="playlistBtn" class="icon" title="재생목록 관리" hidden aria-label="재생목록">
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <line x1="3" y1="6" x2="15" y2="6"/><line x1="3" y1="12" x2="15" y2="12"/>
+              <line x1="3" y1="18" x2="11" y2="18"/><path d="M18 9v8"/><path d="M18 17a2 2 0 1 1-2-2" fill="currentColor"/>
+            </svg>
+          </button>
+          <!-- 재생목록이 비어 있을 때만 — 어디서 채우는지 알려 준다 -->
+          <div id="plTip" hidden>
+            <span class="t">여기서 노래를 추가하세요</span>
+            <button id="plTipX" title="닫기" aria-label="닫기">✕</button>
+          </div>
+        </span>
       </div>
       <div id="guestNote">방장이 재생을 조작합니다</div>
     </div>
@@ -346,8 +353,16 @@
   <p class="modal-sub">제목을 누르면 재생 · <b>✕</b> 로 제거 · 아래에서 추가합니다.</p>
   <div id="plTracks" class="pl-tracks"></div>
   <div class="pl-add">
-    <input id="plAddInput" type="text" maxlength="400" autocomplete="off"
-           placeholder="유튜브 링크 추가 — 재생목록 링크면 전체가 담깁니다" />
+    <!-- 안내 글이 길어 칸에 안 들어간다. 진짜 placeholder 대신 겹쳐 둔 글을
+         흘려 보낸다 — placeholder 는 움직이게 할 수 없다. -->
+    <span class="ph-wrap">
+      <input id="plAddInput" type="text" maxlength="400" autocomplete="off"
+             aria-label="유튜브 링크 추가 — 재생목록 링크면 전체가 담깁니다" />
+      <span id="plAddPh" aria-hidden="true">
+        <span>유튜브 링크 추가 — 재생목록 링크면 전체가 담깁니다</span>
+        <span>유튜브 링크 추가 — 재생목록 링크면 전체가 담깁니다</span>
+      </span>
+    </span>
     <button id="plAddBtn">추가</button>
   </div>
   <p id="plAddHint" class="pl-hint" hidden></p>

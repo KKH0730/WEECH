@@ -313,10 +313,26 @@ input,textarea{font-family:inherit;}
 .pl-del:hover{background:rgba(255,122,107,.25);color:#ffb3a8;}
 .pl-empty{color:var(--faint);padding:18px;text-align:center;font-size:13px;}
 .pl-add{display:flex;gap:8px;margin-bottom:8px;}
+.pl-add .ph-wrap{position:relative;flex:1;min-width:0;display:flex;}
 .pl-add input{
   flex:1;min-width:0;height:36px;padding:0 12px;border-radius:8px;
   background:rgba(255,255,255,.06);border:1px solid var(--line);color:var(--ink);font-size:13px;outline:none;
 }
+/* 칸 위에 겹쳐 둔 안내 글. 칸보다 길면 왼쪽으로 흐른다.
+ * 같은 글을 두 벌 두고 한 벌 폭만큼 밀어, 끝과 처음이 이어져 보이게 한다. */
+#plAddPh{
+  position:absolute;left:13px;right:13px;top:1px;bottom:1px;
+  display:flex;align-items:center;gap:3em;
+  overflow:hidden;pointer-events:none;
+  color:var(--faint);font-size:13px;white-space:nowrap;
+}
+#plAddPh > span{flex:none;animation:phFlow 13s linear infinite;}
+@keyframes phFlow{from{transform:translateX(0)}to{transform:translateX(calc(-100% - 3em))}}
+/* 칸에 다 들어가면 흐를 이유가 없다 — 둘째 벌을 접고 멈춘다 */
+#plAddPh.fits > span{animation:none;}
+#plAddPh.fits > span + span{display:none;}
+/* 뭔가 적기 시작하면 사라진다 (진짜 placeholder 와 같은 동작) */
+#plAddPh[hidden]{display:none;}
 .pl-add input:focus{border-color:var(--accent);}
 .pl-add button{
   flex:none;padding:0 16px;border-radius:8px;border:0;cursor:pointer;
@@ -387,6 +403,39 @@ input,textarea{font-family:inherit;}
 }
 #hostCtl #playlistBtn svg{width:1.3em !important;height:1.3em !important;}
 #hostCtl #playlistBtn[hidden]{display:none;}
+
+/* 재생목록이 비어 있을 때 ☰ 아래에 붙는 안내.
+ * 버튼 옆에 붙어 있어야 '여기' 가 어디인지 바로 안다. */
+#plWrap{position:relative;display:flex;align-items:center;}
+#plTip{
+  position:absolute;top:calc(100% + 0.55em);right:-0.2em;z-index:30;
+  display:flex;align-items:center;gap:0.4em;white-space:nowrap;
+  padding:0.3em 0.35em 0.3em 0.75em;border-radius:0.55em;
+  /* 호박색은 조작 버튼이 쓰는 색이다. 안내는 하늘색으로 구분한다 */
+  background:#6ec8ff;color:#06243a;
+  font-size:0.88em;font-weight:700;line-height:1.25;
+  box-shadow:0 5px 18px rgba(110,200,255,.34);
+  animation:tipIn .35s ease both;
+}
+#plTip[hidden]{display:none;}
+/* 위를 가리키는 꼭지 */
+#plTip::before{
+  content:'';position:absolute;top:-0.32em;right:1em;
+  width:0.64em;height:0.64em;background:#6ec8ff;transform:rotate(45deg);
+}
+#plTip .t{position:relative;}
+/* 이 버튼은 #hostCtl 안에 있다. '#hostCtl button' 이 id 하나짜리 선택자보다
+ * 우선순위가 높아(101 > 100) 크기·배경·글자색을 다 덮어쓴다.
+ * id 를 둘 겹쳐(200) 확실히 이기게 한다. */
+#plTip #plTipX{
+  position:relative;flex:none;width:1.4em;height:1.4em;border:0;border-radius:50%;
+  background:rgba(0,0,0,.12);color:#000;cursor:pointer;
+  font-size:0.8em;font-weight:800;line-height:1;
+  display:flex;align-items:center;justify-content:center;
+  transition:.15s;
+}
+#plTip #plTipX:hover{background:rgba(0,0,0,.3);color:#000;}
+@keyframes tipIn{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}
 
 /* 프로그레스 바 — 모두에게 진행 상황 표시, 드래그 탐색은 방장만 */
 #seekRow{display:flex;align-items:center;gap:0.64em;}
