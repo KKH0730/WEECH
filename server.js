@@ -33,6 +33,12 @@ const MIME = {
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
   '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
+/* 믹스(라디오)인가 — RD… 로 시작하는 목록은 유튜브가 자동 생성하는 무한 재생목록이다.
+ * 진짜 재생목록(PL·OL·FL·LL…)과 달리 고정된 곡 목록이 없다. */
+function isMixList(id) {
+  return /^RD/.test(String(id || ''));
+}
+
 /* 링크 뭉치를 적힌 순서대로 훑어 '영상' 과 '재생목록' 으로 나눈다 */
 function parseLinks(text) {
   if (typeof text !== 'string') return [];
@@ -141,6 +147,15 @@ async function expandPlaylist(ref) {
   const key = ref.list + '|' + (ref.seed || '');
   if (listCache.has(key)) return listCache.get(key);
 
+  // 믹스(RD…)는 고정된 목록이 아니다. 유튜브가 씨앗 영상을 기준으로 호출할 때마다
+  // 새로 만들어내는 무한 라디오(isInfinite)라, 같은 링크라도 곡 구성과 순서가 매번 다르다.
+  // 공유한 사람이 들려주려던 건 씨앗 영상 한 곡이므로 그것만 담는다.
+  if (isMixList(ref.list) && ref.seed) {
+    const only = [{ id: ref.seed, title: '' }];
+    listCache.set(key, only);
+    return only;
+  }
+
   // 1순위: InnerTube /next (제목 포함, 순서 유지)
   const via = await expandViaInnerTube(ref);
   if (via.length) {
@@ -207,13 +222,21 @@ async function expandPlaylist(ref) {
   return fallback;
 }
 
+/* 믹스를 한 곡으로 줄였을 때 보여줄 안내 */
+function mixNote(n) {
+  return '믹스(RD…) 링크 ' + n + '개는 유튜브가 매번 새로 만드는 목록이라 ' +
+    '공유한 영상 한 곡만 담았습니다. 순서를 지키려면 PL… 재생목록 링크를 써 주세요.';
+}
+
 /* 링크 뭉치 → 적힌 순서 그대로의 재생목록 */
 async function resolveLinks(text) {
   const refs = parseLinks(text);
   const seen = new Set();
   const out = [];
   let truncated = false;
+  let mixes = 0;
   for (const ref of refs) {
+    if (ref.kind === 'list' && isMixList(ref.list) && ref.seed) mixes++;
     const items = ref.kind === 'video'
       ? [{ id: ref.id, title: '' }]
       : await expandPlaylist(ref);
@@ -225,7 +248,7 @@ async function resolveLinks(text) {
     }
     if (out.length >= MAX_PLAYLIST) { truncated = true; break; }
   }
-  return { items: out, truncated: truncated };
+  return { items: out, truncated: truncated, mixes: mixes };
 }
 
 const titleCache = new Map();   // videoId -> { title, author }
@@ -600,6 +623,7 @@ function handleMessage(entry, m, now) {
       room.hostId = u.id;
       conn.send({ t: 'joined', you: u.id, host: room.hostId, room: roomPayload(room), users: userList(room) });
       if (res.truncated) conn.send({ t: 'info', msg: '재생목록이 길어 ' + MAX_PLAYLIST + '곡까지만 담았습니다.' });
+      if (res.mixes) conn.send({ t: 'info', msg: mixNote(res.mixes) });
       hydrateTitles(room);
       pushLobby();
       console.log('  방 생성 [' + code + '] ' + title + ' / ' + res.items.length + '곡 / 방장 ' + name);
@@ -723,6 +747,7 @@ function handleMessage(entry, m, now) {
           room.idx = at >= 0 ? at : 0;
           if (at < 0) setPlayback(room, { idx: 0, position: 0, playing: false });
           if (res.truncated) conn.send({ t: 'info', msg: '재생목록이 길어 ' + MAX_PLAYLIST + '곡까지만 담았습니다.' });
+          if (res.mixes) conn.send({ t: 'info', msg: mixNote(res.mixes) });
           hydrateTitles(room);
           broadcast(room, { t: 'room', title: room.title, playlist: room.playlist });
           pushLobby();
