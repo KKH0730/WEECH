@@ -103,7 +103,7 @@ function itemsAfter(html, key) {
   return out;
 }
 
-const listCache = new Map();    // listId -> [{id,title}]
+const listCache = new Map();    // listId|seed -> { items:[{id,title}], ok }
 
 // youtube.com 웹이 내부적으로 쓰는 InnerTube 키(공개 상수 — API 키 발급 불필요)
 const YT_KEY = 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8';
@@ -145,18 +145,26 @@ async function expandViaInnerTube(ref) {
   return list;
 }
 
-/* 재생목록을 펼친다 — API 키 없이. 먼저 InnerTube, 실패하면 공개 페이지 긁기. */
+/* 재생목록을 펼친다 — API 키 없이. 먼저 InnerTube, 실패하면 공개 페이지 긁기.
+ *  돌려주는 값: { items, ok }
+ *  ok=false 면 목록 자체를 못 읽어 씨앗 영상 한 곡으로 때운 것이다.
+ *  (비공개·일부공개 재생목록은 로그인 없이는 읽을 수 없다 — 쓰는 사람에게 알려야 한다) */
 async function expandPlaylist(ref) {
   const key = ref.list + '|' + (ref.seed || '');
   if (listCache.has(key)) return listCache.get(key);
+
+  const save = (items, ok, ttl) => {
+    const got = { items: items, ok: ok };
+    listCache.set(key, got);
+    if (ttl) setTimeout(() => listCache.delete(key), ttl);
+    return got;
+  };
 
   // 믹스(RD…)는 고정된 목록이 아니다. 유튜브가 씨앗 영상을 기준으로 호출할 때마다
   // 새로 만들어내는 무한 라디오(isInfinite)라, 같은 링크라도 곡 구성과 순서가 매번 다르다.
   // 공유한 사람이 들려주려던 건 씨앗 영상 한 곡이므로 그것만 담는다.
   if (isMixList(ref.list) && ref.seed) {
-    const only = [{ id: ref.seed, title: '' }];
-    listCache.set(key, only);
-    return only;
+    return save([{ id: ref.seed, title: '' }], true, 0);   // 일부러 한 곡 — 실패가 아니다
   }
 
   // 1순위: InnerTube /next (제목 포함, 순서 유지)
@@ -168,9 +176,7 @@ async function expandPlaylist(ref) {
       if (at > 0) via.unshift(via.splice(at, 1)[0]);
       else if (at < 0) via.unshift({ id: ref.seed, title: '' });
     }
-    listCache.set(key, via);
-    setTimeout(() => listCache.delete(key), 10 * 60 * 1000);
-    return via;
+    return save(via, true, 10 * 60 * 1000);
   }
 
   // 2순위: 믹스(RD…)는 목록 페이지가 비어 있다. 씨앗 영상의 시청 페이지에서만 목록이 만들어진다.
@@ -179,6 +185,7 @@ async function expandPlaylist(ref) {
   urls.push('https://www.youtube.com/playlist?list=' + ref.list);
 
   for (const url of urls) {
+    const isWatch = url.indexOf('/watch?') >= 0;
     try {
       const ctl = new AbortController();
       const timer = setTimeout(() => ctl.abort(), 9000);
@@ -192,9 +199,20 @@ async function expandPlaylist(ref) {
 
       let items = itemsAfter(html, 'playlistVideoRenderer');
       if (!items.length) items = itemsAfter(html, 'playlistPanelVideoRenderer');
-      if (!items.length) {
-        // 마지막 수단 — 페이지에 등장하는 videoId 를 순서대로
-        const ids = [...new Set([...html.matchAll(/"videoId":"([A-Za-z0-9_-]{11})"/g)].map((m) => m[1]))];
+      if (!items.length && !isWatch) {
+        // 마지막 수단 — 재생목록 페이지에 한해서만. 그 페이지의 videoId 는 목록 자체다.
+        //
+        // 시청 페이지에는 절대 쓰지 않는다. 유튜브가 재생목록 패널을 클라이언트에서
+        // 그리도록 바꾼 뒤로, 시청 페이지 HTML 에 남은 videoId 는 전부 '추천 영상'
+        // (secondaryResults) 이다. 실제로 세어 보면 49개가 모두 추천이었다.
+        // 그걸 담으면 내 재생목록 대신 남의 추천이 들어간다.
+        //
+        // 재생목록 페이지에는 지금 추천 묶음이 없지만, 언제 생겨도 새지 않도록
+        // 추천 묶음이 시작되는 자리에서 잘라내고 그 앞쪽만 훑는다.
+        const cut = ['"secondaryResults"', '"watchNextEndScreenRenderer"']
+          .map((k) => html.indexOf(k)).filter((i) => i > 0);
+        const body = cut.length ? html.slice(0, Math.min.apply(null, cut)) : html;
+        const ids = [...new Set([...body.matchAll(/"videoId":"([A-Za-z0-9_-]{11})"/g)].map((m) => m[1]))];
         items = ids.map((id) => ({ id: id, title: '' }));
       }
       // 중복 제거 + 상한
@@ -206,23 +224,28 @@ async function expandPlaylist(ref) {
         list.push(it);
         if (list.length >= MAX_PLAYLIST) break;
       }
+      // 아무것도 못 얻었으면 다음 후보 URL 로. 여기서 씨앗을 먼저 끼워 넣으면
+      // '한 곡짜리 목록' 이 되어 성공으로 기록되고, 못 펼쳤다는 사실이 묻힌다.
+      if (!list.length) continue;
       // 씨앗 영상이 있으면 그 곡부터 — 링크를 공유한 사람이 들려주려던 곡이다
       if (ref.seed) {
         const at = list.findIndex((it) => it.id === ref.seed);
         if (at > 0) list.unshift(list.splice(at, 1)[0]);
         else if (at < 0) list.unshift({ id: ref.seed, title: '' });
       }
-      if (list.length) {
-        listCache.set(key, list);
-        setTimeout(() => listCache.delete(key), 10 * 60 * 1000);   // 10분 뒤 잊는다
-        return list;
-      }
+      return save(list, true, 10 * 60 * 1000);                      // 10분 뒤 잊는다
     } catch (e) { /* 다음 후보 URL 로 */ }
   }
-  // 아무것도 못 얻었지만 씨앗이라도 있으면 그 한 곡이라도
-  const fallback = ref.seed ? [{ id: ref.seed, title: '' }] : [];
-  listCache.set(key, fallback);
-  return fallback;
+  // 목록을 못 읽었다. 씨앗이라도 있으면 그 한 곡이라도 담되, 실패로 표시한다.
+  // 짧게만 기억한다 — 비공개 재생목록을 공개로 바꾸고 다시 넣는 일이 흔하다.
+  return save(ref.seed ? [{ id: ref.seed, title: '' }] : [], false, 60 * 1000);
+}
+
+/* 재생목록을 못 펼쳤을 때 보여줄 안내 */
+function listNote(n) {
+  return '재생목록 ' + n + '개를 펼치지 못했습니다 — 지금은 링크에 들어 있던 영상만 담았습니다. ' +
+    '유튜브가 잠시 응답하지 않았을 수 있으니 잠시 뒤 다시 넣어 보세요. ' +
+    '계속 안 되면 비공개(나만 보기) 목록일 수 있습니다 — 공개 범위를 "공개" 나 "일부공개" 로 바꿔 주세요.';
 }
 
 /* 믹스를 한 곡으로 줄였을 때 보여줄 안내 */
@@ -238,11 +261,16 @@ async function resolveLinks(text) {
   const out = [];
   let truncated = false;
   let mixes = 0;
+  let failed = 0;
   for (const ref of refs) {
     if (ref.kind === 'list' && isMixList(ref.list) && ref.seed) mixes++;
-    const items = ref.kind === 'video'
-      ? [{ id: ref.id, title: '' }]
-      : await expandPlaylist(ref);
+    let items;
+    if (ref.kind === 'video') items = [{ id: ref.id, title: '' }];
+    else {
+      const got = await expandPlaylist(ref);
+      items = got.items;
+      if (!got.ok) failed++;
+    }
     for (const it of items) {
       if (seen.has(it.id)) continue;
       if (out.length >= MAX_PLAYLIST) { truncated = true; break; }
@@ -251,7 +279,7 @@ async function resolveLinks(text) {
     }
     if (out.length >= MAX_PLAYLIST) { truncated = true; break; }
   }
-  return { items: out, truncated: truncated, mixes: mixes };
+  return { items: out, truncated: truncated, mixes: mixes, failed: failed };
 }
 
 const titleCache = new Map();   // videoId -> { title, author }
@@ -714,6 +742,7 @@ function handleMessage(entry, m, now) {
       conn.send({ t: 'joined', you: u.id, name: u.name, token: u.token, host: room.hostId, room: roomPayload(room), users: userList(room) });
       if (res.truncated) conn.send({ t: 'info', msg: '재생목록이 길어 ' + MAX_PLAYLIST + '곡까지만 담았습니다.' });
       if (res.mixes) conn.send({ t: 'info', msg: mixNote(res.mixes) });
+      if (res.failed) conn.send({ t: 'info', msg: listNote(res.failed) });
       hydrateTitles(room);
       pushLobby();
       console.log('  방 생성 [' + code + '] ' + title + ' / ' + res.items.length + '곡 / 방장 ' + name);
@@ -894,6 +923,7 @@ function handleMessage(entry, m, now) {
           if (at < 0) setPlayback(room, { idx: 0, position: 0, playing: false });
           if (res.truncated) conn.send({ t: 'info', msg: '재생목록이 길어 ' + MAX_PLAYLIST + '곡까지만 담았습니다.' });
           if (res.mixes) conn.send({ t: 'info', msg: mixNote(res.mixes) });
+          if (res.failed) conn.send({ t: 'info', msg: listNote(res.failed) });
           hydrateTitles(room);
           broadcast(room, { t: 'room', title: room.title, playlist: room.playlist });
           pushLobby();

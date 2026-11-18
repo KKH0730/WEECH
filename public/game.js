@@ -1246,9 +1246,31 @@ $('unmuteBtn').addEventListener('click', () => { TV.unmute(); $('unmuteBtn').hid
 /* ------------------------------------------------------------------ */
 /* 방 설정                                                              */
 /* ------------------------------------------------------------------ */
+/* 무엇으로 알아들었는지 입력하는 동안 바로 보여 준다.
+ *  재생목록 링크는 '전체가 담긴다' 는 걸 눌러 보기 전에 알 수 있어야 한다. */
+function updatePlHint() {
+  const el = $('plAddHint');
+  const v = $('plAddInput').value.trim();
+  if (!v) { el.hidden = true; return; }
+  const c = countLinks(v);
+  if (!c.v && !c.p) {
+    el.textContent = '유튜브 링크를 알아보지 못했습니다.';
+    el.className = 'pl-hint warn';
+    el.hidden = false;
+    return;
+  }
+  const parts = [];
+  if (c.p) parts.push('재생목록 <b>' + c.p + '개</b> — 목록 전체가 담깁니다');
+  if (c.v) parts.push('영상 <b>' + c.v + '개</b>');
+  el.innerHTML = parts.join(' + ');
+  el.className = 'pl-hint';
+  el.hidden = false;
+}
+
 function openPlaylist() {
   if (!canCtl() || !room) return;
   $('plAddInput').value = '';
+  $('plAddHint').hidden = true;
   $('playlistPanel').hidden = false;   // 먼저 띄워야 renderPlTracks 가 그린다
   renderPlTracks();
 }
@@ -1333,8 +1355,10 @@ function addTrack() {
   const links = currentIds().concat(v).join('\n');   // 기존 뒤에 덧붙인다
   send({ t: 'settings', links: links });
   $('plAddInput').value = '';
-  toast('추가하는 중…', 1600);
+  $('plAddHint').hidden = true;
+  toast(countLinks(v).p ? '재생목록을 펼치는 중…' : '추가하는 중…', 1800);
 }
+$('plAddInput').addEventListener('input', updatePlHint);
 $('plAddBtn').addEventListener('click', addTrack);
 $('plAddInput').addEventListener('keydown', (e) => {
   e.stopPropagation();
