@@ -16,6 +16,8 @@ const MAX_ROOMS = 50;       // 동시 운영 가능한 방 수
 const MAX_PLAYLIST = 50;    // 재생목록 최대 곡 수
 const TICK_MS = 100;        // 10Hz 위치 브로드캐스트
 const GRACE_MS = 30000;     // 연결이 끊겨도 자리를 지켜주는 시간 (새로고침 복구용)
+const MAX_SEATS = 200;      // 좌석 번호 상한 (roomdef 의 좌석 수보다 넉넉히)
+const KICK_BAN_MS = 5 * 60 * 1000;   // 내보낸 사람이 같은 자리로 되돌아오지 못하는 시간
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
 const GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
@@ -432,6 +434,24 @@ function makeCode() {
   return null;
 }
 
+/* 들어온 사람에게 지어 주는 이름 — 로비에서 닉네임을 묻지 않는다.
+ * 같은 방 안에서 겹치지 않게 고르고, 들어온 뒤에 본인이 바꿀 수 있다. */
+const NICK_ADJ = ['졸린', '신난', '느긋한', '조용한', '수줍은', '용감한', '엉뚱한', '나른한',
+  '상냥한', '씩씩한', '새침한', '덤덤한', '귀여운', '심심한', '발랄한', '점잖은'];
+const NICK_NOUN = ['수달', '너구리', '고라니', '부엉이', '해달', '다람쥐', '고슴도치', '펭귄',
+  '물범', '여우', '두더지', '담비', '까치', '햄스터', '알파카', '청설모'];
+
+function randomName(room) {
+  const taken = new Set();
+  if (room) for (const u of room.users.values()) taken.add(u.name);
+  for (let i = 0; i < 60; i++) {
+    const n = NICK_ADJ[Math.floor(Math.random() * NICK_ADJ.length)] + ' ' +
+      NICK_NOUN[Math.floor(Math.random() * NICK_NOUN.length)];
+    if (!taken.has(n)) return n;
+  }
+  return '손님' + (100 + Math.floor(Math.random() * 900));
+}
+
 function clean(s, max) {
   if (typeof s !== 'string') return '';
   let out = '';
@@ -527,6 +547,32 @@ function setPlayback(r, patch) {
   });
 }
 
+/* ---- 영화관 좌석 ------------------------------------------------
+ *  한 자리에 한 사람만. 누가 어디 앉았는지는 서버가 쥐고 있어야
+ *  두 사람이 같은 의자를 동시에 집는 일이 없다.
+ * ------------------------------------------------------------------ */
+function sit(room, user, i) {
+  if (!(i >= 0 && i < MAX_SEATS)) return false;
+  if (user.seat === i) return true;
+  for (const u of room.users.values()) if (u.seat === i) return false;   // 이미 앉은 사람이 있다
+  user.seat = i;
+  broadcast(room, { t: 'seat', id: user.id, seat: i });
+  return true;
+}
+
+function stand(room, user) {
+  if (user.seat < 0) return;
+  user.seat = -1;
+  broadcast(room, { t: 'seat', id: user.id, seat: -1 });
+}
+
+/* 지금 누가 어느 자리에 앉아 있는지 — 들어온 사람에게 한 번에 알려준다 */
+function seatMap(r) {
+  const out = {};
+  for (const u of r.users.values()) if (u.seat >= 0) out[u.id] = u.seat;
+  return out;
+}
+
 /* 소켓이 끊겼다 — 바로 내보내지 않고 GRACE_MS 동안 자리를 지켜준다.
  * 새로고침하면 같은 토큰으로 돌아와 자리·방장 권한까지 그대로 복구된다. */
 function markGone(user) {
@@ -560,6 +606,7 @@ function leaveRoom(user) {
   clearTimeout(user.graceTimer);
   user.graceTimer = null;
   user.gone = 0;
+  if (user.seat >= 0) { user.seat = -1; broadcast(r, { t: 'seat', id: user.id, seat: -1 }); }
   r.users.delete(user.id);
   if (r.coHosts) r.coHosts.delete(user.id);
   user.room = null;
@@ -635,7 +682,7 @@ function handleMessage(entry, m, now) {
   if (m.t === 'create') {
     if (user && user.room) return;
     if (rooms.size >= MAX_ROOMS) { conn.send({ t: 'err', msg: '방이 너무 많습니다. 잠시 후 다시 시도해 주세요.' }); return; }
-    const name = clean(m.name, 12) || '익명';
+    const name = clean(m.name, 12) || randomName(null);
     const title = clean(m.title, 40) || (name + '의 방');
     const refs = parseLinks(m.links);
     if (!refs.length) { conn.send({ t: 'err', msg: '유튜브 링크를 하나 이상 넣어 주세요.' }); return; }
@@ -656,6 +703,7 @@ function handleMessage(entry, m, now) {
 
       const room = {
         code: code, title: title, hostId: 0, coHosts: new Set(), createdAt: Date.now(),
+        kicked: new Map(),               // 재입장 토큰 -> 언제까지 막을지
         playlist: res.items,
         idx: 0, playing: false, position: 0, updatedAt: Date.now(),
         users: new Map()
@@ -663,7 +711,7 @@ function handleMessage(entry, m, now) {
       rooms.set(code, room);
       const u = admit(entry, room, name);
       room.hostId = u.id;
-      conn.send({ t: 'joined', you: u.id, token: u.token, host: room.hostId, room: roomPayload(room), users: userList(room) });
+      conn.send({ t: 'joined', you: u.id, name: u.name, token: u.token, host: room.hostId, room: roomPayload(room), users: userList(room) });
       if (res.truncated) conn.send({ t: 'info', msg: '재생목록이 길어 ' + MAX_PLAYLIST + '곡까지만 담았습니다.' });
       if (res.mixes) conn.send({ t: 'info', msg: mixNote(res.mixes) });
       hydrateTitles(room);
@@ -687,11 +735,19 @@ function handleMessage(entry, m, now) {
 
     // 새로고침 복구 — 유예 중인 내 자리가 남아 있으면 그대로 돌아간다
     if (m.token) {
+      const until = room.kicked.get(m.token);
+      if (until !== undefined) {
+        if (until > Date.now()) {
+          conn.send({ t: 'err', msg: '이 방에서 내보내졌습니다.', stale: true });
+          return;
+        }
+        room.kicked.delete(m.token);     // 기한이 지났다
+      }
       let prev = null;
       for (const p of room.users.values()) if (p.gone && p.token === m.token) { prev = p; break; }
       if (prev) {
         restore(entry, prev);
-        conn.send({ t: 'joined', you: prev.id, token: prev.token, host: room.hostId, room: roomPayload(room), users: userList(room) });
+        conn.send({ t: 'joined', you: prev.id, name: prev.name, token: prev.token, host: room.hostId, room: roomPayload(room), users: userList(room), seats: seatMap(room) });
         return;
       }
       conn.send({ t: 'err', msg: '자리가 이미 정리되었습니다.', stale: true });
@@ -699,9 +755,9 @@ function handleMessage(entry, m, now) {
     }
 
     if (room.users.size >= ROOM_CAP) { conn.send({ t: 'err', msg: '방이 가득 찼습니다. (' + ROOM_CAP + '명)' }); return; }
-    const name = clean(m.name, 12) || '익명';
+    const name = clean(m.name, 12) || randomName(room);
     const u = admit(entry, room, name);
-    conn.send({ t: 'joined', you: u.id, token: u.token, host: room.hostId, room: roomPayload(room), users: userList(room) });
+    conn.send({ t: 'joined', you: u.id, name: u.name, token: u.token, host: room.hostId, room: roomPayload(room), users: userList(room), seats: seatMap(room) });
     broadcast(room, { t: 'user+', user: pubUser(u) }, u.id);
     pushLobby();
     return;
@@ -731,6 +787,14 @@ function handleMessage(entry, m, now) {
       user.hp = clampNum(m.hp, -2, 2);         // 고개 상하 (시선)
       return;
 
+    case 'sit':
+      if (!sit(room, user, m.i | 0)) conn.send({ t: 'seatno', i: m.i | 0 });
+      return;
+
+    case 'stand':
+      stand(room, user);
+      return;
+
     case 'chat': {
       if (now - user.lastChat < 500) return;
       const txt = clean(m.txt, 120);
@@ -751,6 +815,26 @@ function handleMessage(entry, m, now) {
         nx: clampNum(m.nx, -1000, 1000), ny: clampNum(m.ny, -1000, 1000), nz: clampNum(m.nz, -1000, 1000),
         pid: m.pid | 0
       });
+      return;
+    }
+
+    /* 이름 바꾸기 — 자기 이름만. 로비에서 닉네임을 묻지 않으므로
+     * 지어 받은 이름이 마음에 안 들면 참여자 목록에서 고친다. */
+    case 'rename': {
+      if (now - user.lastRename < 800) return;
+      const nm = clean(m.name, 12);
+      if (!nm || nm === user.name) return;
+      for (const u of room.users.values()) {
+        if (u !== user && u.name === nm) {
+          conn.send({ t: 'err', msg: '같은 이름을 쓰는 사람이 있습니다.' });
+          return;
+        }
+      }
+      user.lastRename = now;
+      const was = user.name;
+      user.name = nm;
+      broadcast(room, { t: 'rename', id: user.id, was: was, name: nm });
+      pushLobby();                 // 방장 이름이 로비 목록에 보인다
       return;
     }
 
@@ -835,6 +919,27 @@ function handleMessage(entry, m, now) {
       return;
     }
 
+    case 'kick': {
+      if (!isHost) { conn.send({ t: 'err', msg: '방장만 내보낼 수 있습니다.' }); return; }
+      const target = room.users.get(m.id | 0);
+      if (!target || target.id === room.hostId || target.id === user.id) return;
+
+      const tconn = target.conn;
+      const tname = target.name;
+      // 같은 창에서 곧장 되돌아오지 못하게 잠시 막는다
+      room.kicked.set(target.token, Date.now() + KICK_BAN_MS);
+      // 그 사람의 소켓이 더는 이 방 사람으로 취급되지 않게 끊어 둔다
+      for (const e of sockets) if (e.user === target) { e.user = null; break; }
+
+      leaveRoom(target);                 // 자리·부방장 정리 + 남은 사람에게 알림
+      tconn.send({ t: 'kicked', msg: '방장이 회원님을 내보냈습니다.' });
+      tconn.send({ t: 'rooms', list: lobbyList() });
+      if (rooms.has(room.code)) broadcast(room, { t: 'info', msg: tname + ' 님을 내보냈습니다.' });
+      pushLobby();
+      console.log('  내보냄 [' + room.code + '] ' + tname + ' ← 방장 ' + user.name);
+      return;
+    }
+
     case 'cohost': {
       if (!isHost) { conn.send({ t: 'err', msg: '방장만 부방장을 지정할 수 있습니다.' }); return; }
       const target = room.users.get(m.id | 0);
@@ -856,17 +961,17 @@ function clampNum(v, lo, hi) {
 function admit(entry, room, name) {
   const u = {
     id: nextUserId++, name: name, conn: entry.conn, room: room,
-    token: crypto.randomBytes(12).toString('hex'), gone: 0, graceTimer: null,
+    token: crypto.randomBytes(12).toString('hex'), gone: 0, graceTimer: null, seat: -1,
     x: 600 + (Math.random() - 0.5) * 240, y: 760 + (Math.random() - 0.5) * 80,
     dir: -Math.PI / 2, st: 0, h: 0, joinedAt: Date.now(),
-    lastChat: 0, lastArrow: 0
+    lastChat: 0, lastArrow: 0, lastRename: 0
   };
   room.users.set(u.id, u);
   entry.user = u;
   return u;
 }
 
-const pubUser = (u) => ({ id: u.id, name: u.name, x: Math.round(u.x), y: Math.round(u.y), gone: u.gone ? 1 : 0 });
+const pubUser = (u) => ({ id: u.id, name: u.name, x: Math.round(u.x), y: Math.round(u.y), gone: u.gone ? 1 : 0, seat: u.seat });
 const userList = (r) => Array.from(r.users.values()).map(pubUser);
 
 /* 위치 브로드캐스트 */

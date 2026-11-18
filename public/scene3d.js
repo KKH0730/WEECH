@@ -201,6 +201,36 @@ export function buildScene() {
   api.boardCanvas = boardRes.canvas;
   api.boardTexture = boardRes.tex;
 
+  /* ---------------- 스크린 위 네온 간판 ----------------
+   *  지금 트는 곡을 띄운다. 글자는 캔버스로 그리고 MeshBasicMaterial 로 붙여
+   *  방 조명과 무관하게 스스로 빛난다. 벽에는 PointLight 로 분홍빛이 번진다. */
+  const neonRes = canvasTex(THREE, 2048, 160, (g, w, h) => { g.clearRect(0, 0, w, h); });
+  neonRes.tex.premultiplyAlpha = false;
+  const nAt = onWall(R.NEON, 0);
+  const neonGrp = new THREE.Group();
+  neonGrp.position.set(nAt.x, nAt.y, nAt.z);
+  neonGrp.rotation.y = nAt.ry;
+  // 간판 바탕 — 글자가 떠 보이게 어둡게 깐다
+  neonGrp.add(box(R.NEON.w + 0.3, R.NEON.h + 0.24, R.BOX_DEPTH, mat(0x100d15, 0.55), 0, 0, 0));
+  const neon = new THREE.Mesh(
+    new THREE.PlaneGeometry(R.NEON.w, R.NEON.h),
+    new THREE.MeshBasicMaterial({ map: neonRes.tex, transparent: true, depthWrite: false })
+  );
+  neon.position.z = R.FACE_Z;        // 바탕 앞면보다 앞 — Z-파이팅 방지
+  neon.name = 'neon';
+  neonGrp.add(neon);
+  scene.add(neonGrp);
+
+  const neonLight = new THREE.PointLight(0xff58b0, R.LIGHT.neon, 9, 2);
+  neonLight.position.set(nAt.x + nAt.nx * 0.9, nAt.y - 0.2, nAt.z + nAt.nz * 0.9);
+  scene.add(neonLight);
+
+  api.neonCanvas = neonRes.canvas;
+  api.neonTexture = neonRes.tex;
+  api.neonLight = neonLight;
+  api.neonMesh = neon;
+  collidables.push(neon);
+
   /* ---------------- 실버 / 골드 버튼 (왼쪽 벽) ---------------- */
   R.plaques.forEach((p) => {
     const gold = p.kind === 'gold';
@@ -273,31 +303,27 @@ export function buildScene() {
   const fabric2 = mat(0x6f5880, 0.95);
   const dark = mat(0x3b3146, 0.9);
   const wood = mat(0x5a4132, 0.85);
+  const riser = mat(0x2a2430, 0.95);
   const wood2 = mat(0x75563f, 0.8);
 
   R.furniture.forEach((f) => {
     const g = new THREE.Group();
-    g.position.set(f.x, 0, f.z);
+    g.position.set(f.x, f.y || 0, f.z);
     g.rotation.y = f.rot;
     g.name = f.type;
 
-    if (f.type === 'sofa') {
+    if (f.type === 'chair') {
+      // 영화관 의자 — 방석 · 등받이 · 팔걸이 둘 · 받침대
       const w = f.w, d = f.d;
-      g.add(box(w, 0.34, d, fabric, 0, 0.17, 0));                       // 몸체
-      g.add(box(w - 0.3, 0.16, d - 0.24, fabric2, 0, 0.42, -0.04));     // 방석
-      g.add(box(w, 0.52, 0.22, fabric, 0, 0.6, d / 2 - 0.11));          // 등받이
-      g.add(box(0.22, 0.46, d, dark, -w / 2 + 0.11, 0.45, 0));          // 팔걸이
-      g.add(box(0.22, 0.46, d, dark, w / 2 - 0.11, 0.45, 0));
-      [[-w / 2 + 0.2, d / 2 - 0.2], [w / 2 - 0.2, d / 2 - 0.2],
-       [-w / 2 + 0.2, -d / 2 + 0.2], [w / 2 - 0.2, -d / 2 + 0.2]].forEach((p) => {
-        g.add(box(0.08, 0.1, 0.08, wood, p[0], 0.05, p[1]));
-      });
-    } else if (f.type === 'chair') {
-      g.add(box(f.w, 0.12, f.d, fabric2, 0, 0.42, 0));
-      g.add(box(f.w, 0.5, 0.12, fabric, 0, 0.7, f.d / 2 - 0.06));
-      [[-0.3, -0.3], [0.3, -0.3], [-0.3, 0.3], [0.3, 0.3]].forEach((p) => {
-        g.add(box(0.07, 0.42, 0.07, wood, p[0], 0.21, p[1]));
-      });
+      g.add(box(w - 0.22, 0.14, d - 0.2, fabric2, 0, 0.4, -0.03));          // 방석
+      g.add(box(w - 0.16, 0.66, 0.16, fabric, 0, 0.72, d / 2 - 0.08));      // 등받이
+      g.add(box(0.11, 0.3, d - 0.12, dark, -w / 2 + 0.055, 0.56, 0));       // 팔걸이
+      g.add(box(0.11, 0.3, d - 0.12, dark, w / 2 - 0.055, 0.56, 0));
+      g.add(box(w - 0.3, 0.33, 0.22, dark, 0, 0.165, 0));                   // 받침대
+    } else if (f.type === 'step') {
+      // 뒷줄을 한 단 올리는 계단. 윗면만 보이면 되므로 상자 하나
+      g.add(box(f.w, Math.max(0.02, f.top), f.d, riser, 0, f.top / 2, 0));
+      g.add(box(f.w, 0.02, 0.05, mat(0xd98d4e, 0.4), 0, f.top + 0.01, -f.d / 2 + 0.03));  // 코끝 유도등
     } else if (f.type === 'table') {
       g.add(box(f.w, 0.07, f.d, wood2, 0, 0.42, 0));
       [[-f.w / 2 + 0.14, -f.d / 2 + 0.14], [f.w / 2 - 0.14, -f.d / 2 + 0.14],
@@ -338,9 +364,11 @@ export function buildScene() {
     }
 
     g.traverse((o) => { if (o.isMesh) collidables.push(o); });
-    const sh = blob(Math.max(f.w, f.d) * 0.75, 0.55);
-    sh.position.set(f.x, 0.013, f.z);
-    scene.add(sh);
+    if (f.type !== 'step') {
+      const sh = blob(Math.max(f.w, f.d) * 0.75, 0.55);
+      sh.position.set(f.x, (f.y || 0) + 0.013, f.z);
+      scene.add(sh);
+    }
     scene.add(g);
   });
 
@@ -486,6 +514,13 @@ export function buildScene() {
     }
     if (api.projectorLens) {
       api.projectorLens.material.color.setScalar(tvOn ? 0.75 + Math.sin(t * 7.1) * 0.12 : 0.1);
+    }
+
+    // 네온 간판 — 진짜 네온관처럼 미세하게 흔들린다
+    if (api.neonLight) {
+      const fl = 0.88 + Math.sin(t * 1.9) * 0.08 + Math.sin(t * 13.7) * 0.04;
+      api.neonLight.intensity = R.LIGHT.neon * fl;
+      api.neonMesh.material.opacity = 0.92 + (fl - 0.88) * 0.6;
     }
   };
 

@@ -55,6 +55,9 @@ let ws = null, retry = null, myId = 0;
 const outbox = [];
 let lastJoin = null;
 let rejoining = false;      // 새로고침 직후 자동 복구 중인가
+let mySeat = -1;            // 내가 앉은 좌석 번호 (-1 이면 서 있음)
+let sitArmed = true;        // 일어선 뒤 구역을 한 번 벗어나야 다시 앉는다
+let sitRetryAt = 0;         // 거절당했을 때 잠깐 쉬는 시각
 
 /* 방 코드·닉네임·재입장 토큰을 탭에 묶어 둔다.
  * sessionStorage 라 탭을 닫으면 사라지고, 다른 탭에 새어 나가지도 않는다. */
@@ -113,7 +116,7 @@ function toast(msg, ms) {
 
 /* 채팅은 서버에 저장하지 않는다. 이 패널이 들고 있는 동안만 남는다. */
 const CHAT_KEEP = 200;          // 메모리에 쌓아 둘 최대 줄 수
-let chatMin = false;            // 접힘 여부 — 기본은 펼침
+let chatMin = true;             // 접힘 여부 — 기본은 접힘 (최근 2줄만 보인다)
 let chatUnread = 0;
 
 function nowHM() {
@@ -134,7 +137,8 @@ function logMsg(html, cls) {
   log.appendChild(d);
   while (log.children.length > CHAT_KEEP) log.removeChild(log.firstChild);
   if (stick) log.scrollTop = log.scrollHeight;
-  if (chatMin || !stick) bumpUnread();
+  // 접어 두어도 최근 두 줄은 보이므로, '못 본 것' 은 올려서 읽는 중일 때만이다
+  if (!stick) bumpUnread();
 }
 
 function bumpUnread() {
@@ -149,19 +153,20 @@ function clearUnread() {
   $('chatUnread').hidden = true;
 }
 
+/* 접기 = 내역을 두 줄로 줄인다 (입력칸은 그대로). 펴기 = 제 높이로 늘려 스크롤. */
 function setChatMin(min) {
   chatMin = min;
   $('chat').classList.toggle('min', min);
-  if (!min) {
-    const log = $('chatlog');
-    log.scrollTop = log.scrollHeight;
-    clearUnread();
-  }
+  const log = $('chatlog');
+  // 높이가 바뀌는 동안에도 맨 아래(최근 줄)에 붙여 둔다
+  log.scrollTop = log.scrollHeight;
+  setTimeout(() => { log.scrollTop = log.scrollHeight; }, 200);
+  if (!min) clearUnread();
 }
 
-$('chatHead').addEventListener('click', () => setChatMin(!chatMin));
+$('chatToggle').addEventListener('click', () => setChatMin(!chatMin));
 $('chatlog').addEventListener('scroll', () => {
-  if (!chatMin && atBottom($('chatlog'))) clearUnread();
+  if (atBottom($('chatlog'))) clearUnread();
 });
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
@@ -242,16 +247,13 @@ function setCreating(on, msg) {
 function lobbyErr(msg) { const el = $('lobbyErr'); el.textContent = msg; el.hidden = false; }
 
 $('createBtn').addEventListener('click', () => {
-  const name = $('newName').value.trim();
   const title = $('newTitle').value.trim();
   const links = $('newLinks').value.trim();
-  if (!name) { lobbyErr('닉네임을 입력해 주세요.'); return; }
   if (!links || !countIds(links)) { lobbyErr('유튜브 링크를 하나 이상 넣어 주세요.'); return; }
   if (creating) return;
-  me.name = name;
   $('lobbyErr').hidden = true;
   setCreating(true, '방을 만드는 중…');
-  send({ t: 'create', name: name, title: title, links: links });
+  send({ t: 'create', title: title, links: links });        // 이름은 서버가 지어 준다
 });
 
 $('joinByCode').addEventListener('click', () => joinRoom($('joinCode').value.trim().toUpperCase()));
@@ -260,11 +262,49 @@ $('joinCode').addEventListener('keydown', (e) => {
 });
 
 function joinRoom(code) {
-  const name = $('joinName').value.trim();
-  if (!name) { lobbyErr('닉네임을 먼저 입력해 주세요.'); return; }
   if (!code) { lobbyErr('방 코드를 입력하거나 목록에서 고르세요.'); return; }
-  me.name = name;
-  send({ t: 'join', code: code, name: name });
+  send({ t: 'join', code: code });                          // 이름은 서버가 지어 준다
+}
+
+/* ------------------------------------------------------------------ */
+/* 앉기                                                                  */
+/* ------------------------------------------------------------------ */
+/* 의자 앞 구역에 들어서면 자동으로 앉는다. 자리는 서버가 배정하므로
+ * 여기서는 '앉겠다' 고 보내고, 서버가 허락(seat)하면 그때 자세를 바꾼다. */
+function trySit() {
+  if (mySeat >= 0 || screen !== 'room') return;
+  const i = R.seatAt(me.x, me.z, me.y);
+  if (i < 0) { sitArmed = true; return; }         // 구역을 벗어났다 — 다시 앉을 준비
+  if (!sitArmed) return;                          // 방금 일어선 그 자리다
+  if (!me.grounded) return;                       // 뛰어넘는 중에는 앉지 않는다
+  if (performance.now() < sitRetryAt) return;
+  send({ t: 'sit', i: i });
+}
+
+/* 서버가 자리를 내줬다 — 의자에 딱 맞춰 앉힌다 */
+function sitAt(i) {
+  const st = R.seats[i];
+  if (!st) return;
+  mySeat = i;
+  sitArmed = false;
+  me.x = st.x; me.z = st.z; me.dir = st.rot;
+  me.y = st.y; me.vy = 0; me.grounded = true;
+  me.st = 2;
+  moveTarget = null;
+  toast('앉았습니다 — 움직이면 일어섭니다.', 2200);
+}
+
+function standUp() {
+  if (mySeat < 0) return;
+  const st = R.seats[mySeat];
+  mySeat = -1;
+  me.st = 0;
+  sitArmed = false;                               // 구역을 벗어나기 전엔 다시 앉지 않는다
+  if (st) {                                        // 의자 앞으로 한 걸음 물러난다
+    const p = R.collide(st.zx, st.zz - 0.3, 0.26, st.y);
+    me.x = p.x; me.z = p.z;
+  }
+  send({ t: 'stand' });
 }
 
 /* ------------------------------------------------------------------ */
@@ -329,6 +369,7 @@ function connect() {
       case 'joined': {
         setCreating(false);
         myId = m.you; me.id = m.you;
+        if (m.name) me.name = m.name;          // 서버가 지어 준 이름
         room = m.room;
         isHost = (m.host === myId);
         coHosts = (room && room.coHosts) || [];
@@ -336,15 +377,28 @@ function connect() {
         lastJoin = { code: room.code, name: me.name, token: m.token || (lastJoin && lastJoin.token) };
         saveSeat(lastJoin);
         clearAvatars();
+        mySeat = -1; me.st = 0;
         (m.users || []).forEach((u) => {
           if (u.id === myId) { me.x = u.x / 100; me.z = u.y / 100; return; }
           addOther(u);
         });
+        // 새로고침으로 돌아왔다면 앉아 있던 의자도 그대로
+        const seated = m.seats || {};
+        if (seated[myId] !== undefined && seated[myId] >= 0) sitAt(seated[myId]);
         enterRoom();
         break;
       }
 
       case 'left': leaveToLobby(); break;
+
+      case 'kicked':
+        // 보관해 둔 자리를 버려야 새로고침해도 다시 끌려 들어가지 않는다
+        clearSeat();
+        lastJoin = null;
+        rejoining = false;
+        leaveToLobby();
+        lobbyErr(m.msg || '방장이 회원님을 내보냈습니다.');
+        break;
 
       case 's': {
         const seen = new Set();
@@ -364,7 +418,7 @@ function connect() {
         for (const id of Array.from(others.keys())) if (!seen.has(id)) removeOther(id);
         peopleCache = (m.u || []).map((a) => ({ id: a[0], name: a[5], gone: !!a[9] }));
         peopleCache.sort((a, b) => (b.id === myId) - (a.id === myId) || a.id - b.id);
-        $('roomPeople').textContent = peopleCache.length || 1;
+        renderPeopleHead();
         renderPeople();
         break;
       }
@@ -379,13 +433,29 @@ function connect() {
         logMsg(esc(m.name || '누군가') + ' 님이 나갔습니다.', 'sys');
         break;
 
+      case 'seat': {
+        if (m.id === myId) {
+          if (m.seat >= 0) sitAt(m.seat); else { mySeat = -1; me.st = 0; }
+        } else {
+          const g = others.get(m.id);
+          if (g) g.seat = m.seat;
+        }
+        break;
+      }
+
+      case 'seatno':
+        // 그새 다른 사람이 앉았다 — 잠깐 쉬었다 다시 시도한다
+        sitRetryAt = performance.now() + 700;
+        break;
+
       case 'gone': {
         const g = others.get(m.id);
         if (g) { g.gone = !!m.on; g.av.setGone(m.on); }
         logMsg(esc(m.name || '누군가') + (m.on
           ? ' 님의 연결이 끊어졌습니다. 잠시 자리를 비워 둡니다.'
           : ' 님이 돌아왔습니다.'), 'sys');
-        peopleSig = '';                    // 명단을 다시 그리게 한다
+        peopleSig = ''; headSig = '';      // 명단을 다시 그리게 한다
+        renderPeopleHead();
         renderPeople();
         break;
       }
@@ -417,6 +487,23 @@ function connect() {
         if (av) av.say(m.txt);
         logMsg('<b>' + esc(m.name) + '</b>' + esc(m.txt) +
           '<span class="tm">' + nowHM() + '</span>', m.id === myId ? 'me' : '');
+        break;
+      }
+
+      case 'rename': {
+        if (m.id === myId) {
+          me.name = m.name;
+          if (myAvatar) myAvatar.setName(m.name);
+          if (lastJoin) { lastJoin.name = m.name; saveSeat(lastJoin); }
+          toast('이름을 ' + m.name + ' 으로 바꿨습니다.', 2600);
+        } else {
+          const g = others.get(m.id);
+          if (g) { g.name = m.name; g.av.setName(m.name); }
+        }
+        logMsg(esc(m.was) + ' 님이 이름을 <b>' + esc(m.name) + '</b> 으로 바꿨습니다.', 'sys');
+        peopleSig = ''; headSig = '';
+        renderPeopleHead();
+        renderPeople();
         break;
       }
 
@@ -460,7 +547,7 @@ function addOther(u) {
   av.hitMeshes.forEach((mesh) => hitToPlayer.set(mesh.uuid, u.id));
   if (u.gone) av.setGone(true);
   const g = {
-    id: u.id, name: u.name || '익명', gone: !!u.gone,
+    id: u.id, name: u.name || '익명', gone: !!u.gone, seat: (u.seat === undefined ? -1 : u.seat),
     x: u.x / 100, z: u.y / 100, tx: u.x / 100, tz: u.y / 100,
     dir: Math.PI, tdir: Math.PI, st: 0, y: 0, ty: 0, av: av
   };
@@ -499,20 +586,20 @@ function enterRoom() {
   cam.yaw = 0; cam.pitch = 0.88; cam.dist = 12.5; cam.mode = 'lounge';
   camPos.set(me.x, 10, me.z + 10);
 
+  $('peopleToggle').classList.toggle('open', peopleOpen);
+  $('peopleList').hidden = !peopleOpen;
+  headSig = ''; headCount = -1; peopleSig = '';
   applyHostUI();
   applyPlayback();
   drawBoard();
-  logMsg('방에 들어왔습니다. <b>Space</b> 점프 · <b>V</b> 시청 모드 · <b>?</b> 전체 조작.', 'sys');
-}
-
-function hostName() {
-  if (!room) return '—';
-  if (room.hostId === myId) return me.name;
-  const g = others.get(room.hostId);
-  return g ? g.name : '—';
+  logMsg('<b>' + esc(me.name) + '</b> 님으로 들어왔습니다. 이름은 왼쪽 <b>참여자</b> 목록에서 바꿀 수 있습니다.', 'sys');
+  logMsg('<b>Space</b> 점프 · <b>V</b> 시청 모드 · <b>?</b> 전체 조작.', 'sys');
 }
 
 function leaveToLobby() {
+  openShare(false);
+  openSet(false);
+  closePMenu();
   screen = 'lobby';
   room = null; isHost = false;
   clearAvatars();
@@ -522,7 +609,7 @@ function leaveToLobby() {
   $('lobby').hidden = false;
   $('chatlog').innerHTML = '';
   clearUnread();
-  setChatMin(false);
+  setChatMin(true);               // 기본 상태(접힘)로 되돌린다
   cssHost.style.display = 'none';
   setWatchMode(false);
   renderRooms();
@@ -555,13 +642,50 @@ function fallbackCopy(text) {
 
 const inviteUrl = () => location.origin + '/?r=' + (room ? room.code : '');
 
+/* ---- 설정(톱니바퀴) — 방 제목 수정 · 도움말 · 공유를 하나로 묶는다 ----
+ *  상단 막대에 버튼을 늘어놓는 대신 ⚙ 하나만 두고 아래로 펼친다.
+ *  공유는 입장 코드 칩이 넓어 별도 패널로 띄우되, 같은 ⚙ 아래에 붙인다.
+ * ------------------------------------------------------------------ */
+const shareDrop = $('shareDrop');
+const setBtn = $('setBtn'), setDrop = $('setDrop');
+
+function syncSetBtn() {
+  const on = !setDrop.hidden || !shareDrop.hidden;
+  setBtn.classList.toggle('open', on);
+  setBtn.setAttribute('aria-expanded', on ? 'true' : 'false');
+}
+function openSet(open) {
+  setDrop.hidden = !open;
+  if (open) shareDrop.hidden = true;        // 둘이 겹쳐 뜨지 않게
+  syncSetBtn();
+}
+function openShare(open) {
+  shareDrop.hidden = !open;
+  if (open) setDrop.hidden = true;
+  syncSetBtn();
+}
+
+setBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  openView(false);                                       // 시점 메뉴와 겹치지 않게
+  if (!shareDrop.hidden) { openShare(false); return; }   // 공유가 펼쳐져 있으면 접는다
+  openSet(setDrop.hidden);
+});
+setDrop.addEventListener('click', (e) => e.stopPropagation());
+shareDrop.addEventListener('click', (e) => e.stopPropagation());
+document.addEventListener('click', () => { openSet(false); openShare(false); });
+
+$('miTitle').addEventListener('click', () => { openSet(false); startTitleEdit(); });
+$('miHelp').addEventListener('click', () => { openSet(false); $('helpModal').hidden = false; });
+$('miShare').addEventListener('click', () => { openShare(true); });
+
 $('codeBtn').addEventListener('click', () => {
   if (!room) return;
   copyText(room.code).then((ok) => {
     if (!ok) { toast('복사하지 못했습니다. 코드: ' + room.code, 4000); return; }
     const chip = $('codeBtn');
     chip.classList.add('copied');
-    setTimeout(() => chip.classList.remove('copied'), 1200);
+    setTimeout(() => { chip.classList.remove('copied'); openShare(false); }, 900);
     toast('입장 코드 ' + room.code + ' 를 복사했습니다', 2400);
   });
 });
@@ -570,24 +694,51 @@ $('inviteBtn').addEventListener('click', () => {
   if (!room) return;
   const url = inviteUrl();
   copyText(url).then((ok) => {
+    openShare(false);
     toast(ok ? '초대 링크를 복사했습니다 — 붙여넣기만 하면 바로 입장합니다' : url, ok ? 3200 : 6000);
   });
 });
 
-/* 참여자 목록 — 기본은 접혀 있다 */
-let peopleOpen = false;
+/* 참여자 목록 — 기본은 펼쳐 둔다 (접힘 여부는 탭에 기억해 둔다) */
+let peopleOpen = (() => {
+  try { return sessionStorage.getItem('weech.people') !== '0'; } catch (e) { return true; }
+})();
 let peopleCache = [];
 
 $('peopleToggle').addEventListener('click', () => {
   peopleOpen = !peopleOpen;
+  try { sessionStorage.setItem('weech.people', peopleOpen ? '1' : '0'); } catch (e) { /* 무시 */ }
   $('peopleToggle').classList.toggle('open', peopleOpen);
   $('peopleList').hidden = !peopleOpen;
   if (peopleOpen) renderPeople();
 });
 
+/* 머리말 — 목록을 접어 두어도 인원수와 색 점은 늘 보인다.
+ * 위치 브로드캐스트가 10Hz 로 들어오므로 바뀐 때만 다시 그린다. */
+let headSig = '', headCount = -1;
+function renderPeopleHead() {
+  const sig = peopleCache.map((p) => p.id + (p.gone ? 'x' : '')).join(',');
+  if (sig === headSig) return;
+  headSig = sig;
+
+  const n = peopleCache.length || 1;
+  $('roomPeople').textContent = n;
+
+  // 인원이 바뀌었으면 잠깐 반짝여 눈에 띄게 한다
+  if (headCount >= 0 && n !== headCount) {
+    const el = $('peopleToggle');
+    el.classList.remove('bump');
+    void el.offsetWidth;                 // 애니메이션을 다시 태우려면 한 번 끊어줘야 한다
+    el.classList.add('bump');
+    setTimeout(() => el.classList.remove('bump'), 800);
+  }
+  headCount = n;
+}
+
 let peopleSig = '';
 function renderPeople() {
   if (!peopleOpen) return;
+  if (renaming) return;              // 이름을 고치는 중에는 입력칸을 지우지 않는다
   // 명단·역할이 실제로 바뀐 경우에만 DOM 을 다시 만든다.
   // (위치 브로드캐스트가 10Hz 로 들어와 매번 다시 그리면 커서 밑 버튼이 깜빡인다)
   const sig = JSON.stringify([
@@ -596,6 +747,7 @@ function renderPeople() {
   ]);
   if (sig === peopleSig) return;
   peopleSig = sig;
+  closePMenu();                      // 기대고 있던 ⋯ 버튼이 다시 만들어진다
 
   const box = $('peopleList');
   if (!peopleCache.length) { box.innerHTML = '<div class="person"><span class="nm dim">—</span></div>'; return; }
@@ -608,41 +760,146 @@ function renderPeople() {
       (isCo ? '<span class="badge cohost">부방장</span>' : '') +
       (p.id === myId ? '<span class="badge me">나</span>' : '') +
       (p.gone ? '<span class="badge gone">연결 끊김</span>' : '');
-    // 방장 본인만, 자기 자신이 아닌 다른 사람에게 역할 버튼을 보여준다
-    let acts = '';
-    if (isHost && p.id !== myId && !isP) {
-      acts = '<span class="pacts">' +
-        '<button class="pbtn" data-act="cohost" data-id="' + p.id + '" data-on="' + (isCo ? '0' : '1') + '">' +
-        (isCo ? '부방장 해제' : '부방장 지정') + '</button>' +
-        '<button class="pbtn" data-act="makehost" data-id="' + p.id + '">방장 넘기기</button>' +
-        '</span>';
-    }
+    // 내 줄에는 ✎ (이름 바꾸기), 남의 줄에는 방장만 쓸 수 있는 ⋯ (관리)
+    const acts = p.id === myId
+      ? '<button class="pedit" title="이름 바꾸기" aria-label="이름 바꾸기">✎</button>'
+      : ((isHost && !isP)
+        ? '<button class="pmore" data-more="' + p.id + '" title="관리" aria-label="관리">⋯</button>'
+        : '');
     return '<div class="person' + (p.gone ? ' isgone' : '') + '"><span class="swatch" style="background:#' + c + '"></span>' +
            '<span class="nm">' + esc(p.name || '익명') + '</span>' + badges + acts + '</div>';
   }).join('');
 }
 
-/* 유저리스트의 역할 버튼 (방장만) — 다시 그려도 유지되게 위임으로 처리 */
+/* ---- 사람 관리 메뉴 (방장만) --------------------------------------
+ *  목록 상자가 overflow:auto 라 그 안에 드롭다운을 넣으면 잘린다.
+ *  메뉴는 하나만 만들어 목록 바깥에 두고, 누른 ⋯ 버튼 아래로 옮겨 띄운다.
+ * ------------------------------------------------------------------ */
+const pmenu = $('pmenu');
+let pmenuId = -1;
+
+function closePMenu() {
+  if (pmenuId < 0) return;
+  pmenuId = -1;
+  pmenu.hidden = true;
+  const open = $('peopleList').querySelector('.pmore.open');
+  if (open) open.classList.remove('open');
+}
+
+function openPMenu(id, anchor) {
+  const p = peopleCache.find((x) => x.id === id);
+  if (!p || !isHost) return;
+  const isCo = coHosts.includes(id);
+  pmenuId = id;
+  pmenu.innerHTML =
+    '<button class="pmi" data-act="cohost" data-on="' + (isCo ? '0' : '1') + '">' +
+      (isCo ? '부방장 해제' : '부방장 지정') + '</button>' +
+    '<button class="pmi" data-act="makehost">방장 넘기기</button>' +
+    '<div class="sep"></div>' +
+    '<button class="pmi danger" data-act="kick">내보내기</button>';
+  pmenu.hidden = false;
+  anchor.classList.add('open');
+
+  // 버튼 아래에 붙이되, 화면 밖으로 나가면 안쪽으로 당긴다
+  const r = anchor.getBoundingClientRect();
+  const mw = pmenu.offsetWidth, mh = pmenu.offsetHeight;
+  let left = r.right - mw;
+  let top = r.bottom + 6;
+  if (left < 8) left = 8;
+  if (left + mw > innerWidth - 8) left = innerWidth - 8 - mw;
+  if (top + mh > innerHeight - 8) top = Math.max(8, r.top - 6 - mh);   // 자리가 없으면 위로
+  pmenu.style.left = left + 'px';
+  pmenu.style.top = top + 'px';
+}
+
+/* ---- 내 이름 바꾸기 — 참여자 목록의 내 줄에서만 ----------------------
+ *  이름은 입장할 때 서버가 지어 준다. 마음에 안 들면 여기서 고친다.
+ *  고치는 동안에는 10Hz 로 들어오는 명단 갱신이 입력칸을 지우지 않게 막는다.
+ * ------------------------------------------------------------------ */
+let renaming = false;
+
+function startRename(btn) {
+  if (renaming) return;
+  const row = btn.closest('.person');
+  const nm = row && row.querySelector('.nm');
+  if (!nm) return;
+  renaming = true;
+  btn.hidden = true;
+
+  const inp = document.createElement('input');
+  inp.type = 'text';
+  inp.className = 'nminput';
+  inp.maxLength = 12;
+  inp.value = me.name || '';
+  nm.replaceWith(inp);
+  inp.focus();
+  inp.select();
+
+  const done = (save) => {
+    if (!renaming) return;
+    renaming = false;
+    const v = inp.value.trim();
+    if (save && v && v !== me.name) send({ t: 'rename', name: v });
+    peopleSig = '';                  // 원래 모양으로 다시 그린다
+    renderPeople();
+  };
+  inp.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') { e.preventDefault(); done(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); done(false); }
+  });
+  inp.addEventListener('blur', () => done(true));
+}
+
 $('peopleList').addEventListener('click', (e) => {
-  const b = e.target.closest('button.pbtn');
-  if (!b || !isHost) return;
-  const id = +b.dataset.id;
+  const ed = e.target.closest('button.pedit');
+  if (ed) { e.stopPropagation(); startRename(ed); return; }
+  const b = e.target.closest('button.pmore');
+  if (!b) return;
+  e.stopPropagation();
+  const id = +b.dataset.more;
+  if (pmenuId === id) { closePMenu(); return; }    // 같은 버튼을 다시 누르면 닫는다
+  closePMenu();
+  openPMenu(id, b);
+});
+
+pmenu.addEventListener('click', (e) => {
+  const b = e.target.closest('button.pmi');
+  if (!b) return;
+  e.stopPropagation();
+  const id = pmenuId;
+  const p = peopleCache.find((x) => x.id === id);
+  const who = (p ? p.name : '이 사람');
+  closePMenu();
+  if (!isHost || id < 0) return;
+
   if (b.dataset.act === 'makehost') {
-    const p = peopleCache.find((x) => x.id === id);
-    if (confirm((p ? p.name : '이 사람') + ' 님에게 방장을 넘기시겠습니까?')) send({ t: 'makehost', id: id });
+    if (confirm(who + ' 님에게 방장을 넘기시겠습니까?')) send({ t: 'makehost', id: id });
   } else if (b.dataset.act === 'cohost') {
     send({ t: 'cohost', id: id, on: b.dataset.on === '1' });
+  } else if (b.dataset.act === 'kick') {
+    if (confirm(who + ' 님을 방에서 내보낼까요? 잠시 동안 같은 창으로는 다시 들어오지 못합니다.')) {
+      send({ t: 'kick', id: id });
+    }
   }
 });
+
+document.addEventListener('click', closePMenu);
+$('peopleList').addEventListener('scroll', closePMenu);
+addEventListener('resize', closePMenu);
 
 function applyHostUI() {
   const ctl = canCtl();
   $('hostCtl').hidden = !ctl;
   $('guestNote').hidden = ctl;
   $('playlistBtn').hidden = !ctl;
-  $('titleEdit').hidden = !ctl;
+  $('miTitle').hidden = !ctl;          // 설정 메뉴의 '방 제목 수정'
+  $('titleEdit').hidden = !ctl;        // 제목 옆 연필
+  // 좌상단 제목도 같은 권한일 때만 눌린다 (#hud 가 pointer-events:none 이라 클래스로 켠다)
+  const rt = $('roomTitle');
+  rt.classList.toggle('editable', ctl);
+  rt.title = ctl ? '눌러서 방 제목 수정' : '';
   $('playerbar').classList.toggle('host-seek', ctl);
-  $('roomHost').textContent = (room && room.hostId === myId ? '나' : hostName());
 }
 
 /* ------------------------------------------------------------------ */
@@ -662,27 +919,170 @@ function applyPlayback() {
   renderPlTracks();
 }
 
+/* 네온관처럼 — 번지는 빛을 여러 겹 쌓고 마지막에 밝은 심지를 올린다 */
+function neonText(g, text, x, y, glow, core, blur) {
+  g.shadowColor = glow;
+  g.shadowOffsetX = 0; g.shadowOffsetY = 0;
+  for (let i = 3; i >= 1; i--) {               // 바깥 번짐 → 안쪽으로
+    g.shadowBlur = blur * i;
+    g.fillStyle = glow;
+    g.fillText(text, x, y);
+  }
+  g.shadowBlur = blur * 0.5;
+  g.fillStyle = core;                          // 심지는 거의 흰색
+  g.fillText(text, x, y);
+  g.shadowBlur = 0; g.shadowColor = 'transparent';
+}
+
+/* 글자를 '보이는 높이' 기준으로 세로 가운데에 놓을 베이스라인 y.
+ *  textBaseline:'middle' 은 em 상자 기준이라 내려쓰기(g·y·괄호)가 있으면 아래로 쏠린다.
+ *  제목이 바뀔 때마다 높이가 들썩이지 않도록 '내용' 이 아니라 고정 기준 글자로 잰다. */
+const VREF = '가힣AH';          // 내려쓰기(g·y)는 뺀다 — 글자 몸통을 기준으로 삼는다
+function centerBaseline(g, mid) {
+  const m = g.measureText(VREF);
+  const a = m.actualBoundingBoxAscent, d = m.actualBoundingBoxDescent;
+  if (!isFinite(a) || !isFinite(d)) return mid;        // 못 재는 환경이면 그대로
+  return mid + (a - d) / 2;
+}
+
+/* ---- 스크린 위 네온 간판 ---------------------------------------
+ *  재는 일(레이아웃)과 그리는 일을 나눈다. 제목이 간판보다 길면 흐르게 하는데,
+ *  흐르는 동안 매 프레임 글자 폭을 다시 재면 낭비라 한 번 재서 들고 있는다.
+ * ------------------------------------------------------------------ */
+const NEON_PINK = 'rgba(255,88,176,.95)', NEON_PALE = '#fff0f8';
+const NEON_PAD = 56;
+const NEON_SPEED = 100;        // 흐르는 속도 (캔버스 px/초)
+const neonFont = (px) => '700 ' + px + 'px "Noto Sans KR",sans-serif';
+
+let neonLayout = null;         // 지금 간판에 뭘 어디에 그릴지
+let neonPhase = 0;             // 흐른 거리 (px)
+let neonTick = 0;              // 다시 그릴 때까지 모아 둔 시간
+
+/* 간판 내용이 바뀌었다 — 자리를 다시 재고 한 번 그린다 */
 function updateNowPlaying() {
+  const c = world.neonCanvas;
+  if (!c) return;
+  const g = c.getContext('2d');
+  const W = c.width;
+
   const it = currentItem();
-  const n = room && room.playlist ? room.playlist.length : 0;
-  const label = it ? ((room.idx + 1) + '/' + n + '  ' + (it.title || it.id)) : '재생목록이 비어 있습니다';
-  const box = $('nowPlaying'), txt = $('npText');
-  box.classList.remove('scroll');
-  txt.style.animationDuration = '';
-  txt.textContent = label;                       // 먼저 한 줄(말줄임)로 두고 폭을 잰다
-  requestAnimationFrame(() => {
-    if (txt.scrollWidth > box.clientWidth + 2) {  // 넘치면 흐르는 애니메이션으로 전환
-      txt.textContent = '';
-      for (let i = 0; i < 2; i++) {
-        const seg = document.createElement('span');
-        seg.className = 'np-seg';
-        seg.textContent = label;
-        txt.appendChild(seg);
-      }
-      box.classList.add('scroll');
-      txt.style.animationDuration = Math.max(7, label.length * 0.38) + 's';
-    }
-  });
+  if (!it) { neonLayout = { empty: true }; neonPhase = 0; drawNeon(); return; }
+
+  const total = room && room.playlist ? room.playlist.length : 0;
+  const num = (room.idx + 1) + ' / ' + total;
+
+  g.font = '500 46px "Noto Sans KR",sans-serif';     // 불러온 굵기(400·500·700) 안에서 고른다
+  let left = NEON_PAD + g.measureText(num).width + 34;
+  const barX = left;
+  left += 34;
+
+  // 제목 — 남는 폭에 맞춰 글자를 줄여 본다
+  const avail = W - left - NEON_PAD;
+  const title = it.title || it.id;
+  let size = 88;
+  g.font = neonFont(size);
+  while (size > 46 && g.measureText(title).width > avail) { size -= 3; g.font = neonFont(size); }
+
+  let marquee = false;
+  if (g.measureText(title).width > avail) {
+    // 46px 까지 줄여도 안 들어간다 — 말줄임 대신 흐르게 한다.
+    // 흐를 거면 폭에 얽매일 필요가 없으니 글자를 다시 키워 읽기 좋게 둔다.
+    marquee = true;
+    size = 76;
+    g.font = neonFont(size);
+  }
+
+  const w = g.measureText(title).width;
+  neonLayout = {
+    empty: false, num: num, barX: barX, left: left, avail: avail,
+    title: title, font: neonFont(size), w: w,
+    marquee: marquee,
+    gap: Math.max(90, avail * 0.2)        // 꼬리와 다음 머리 사이 간격
+  };
+  neonPhase = 0;
+  neonTick = 0;
+  drawNeon();
+}
+
+/* 잘린 자리에서 글자가 뚝 끊기지 않도록 양 끝을 투명으로 깎는다 */
+function fadeNeonEdges(g, x, w, h) {
+  const fw = Math.min(80, w * 0.12);
+  g.save();
+  g.globalCompositeOperation = 'destination-out';
+  let grd = g.createLinearGradient(x, 0, x + fw, 0);
+  grd.addColorStop(0, 'rgba(0,0,0,1)'); grd.addColorStop(1, 'rgba(0,0,0,0)');
+  g.fillStyle = grd; g.fillRect(x, 0, fw, h);
+  grd = g.createLinearGradient(x + w - fw, 0, x + w, 0);
+  grd.addColorStop(0, 'rgba(0,0,0,0)'); grd.addColorStop(1, 'rgba(0,0,0,1)');
+  g.fillStyle = grd; g.fillRect(x + w - fw, 0, fw, h);
+  g.restore();
+}
+
+/* 재 둔 자리대로 간판을 그린다 (흐르는 중이면 neonPhase 만큼 밀어서) */
+function drawNeon() {
+  const L = neonLayout;
+  const c = world.neonCanvas;
+  if (!L || !c) return;
+  const g = c.getContext('2d');
+  const W = c.width, H = c.height, mid = H / 2;
+
+  g.clearRect(0, 0, W, H);
+  g.textBaseline = 'alphabetic';          // 실제 글자 높이로 가운데를 맞추기 위해
+  g.textAlign = 'left';
+
+  if (L.empty) {
+    g.textAlign = 'center';
+    g.font = neonFont(74);
+    neonText(g, '재생목록이 비어 있습니다', W / 2, centerBaseline(g, mid), NEON_PINK, NEON_PALE, 16);
+    world.neonTexture.needsUpdate = true;
+    return;
+  }
+
+  // 왼쪽에 몇 번째 곡인지 작게
+  g.font = '500 46px "Noto Sans KR",sans-serif';
+  neonText(g, L.num, NEON_PAD, centerBaseline(g, mid), 'rgba(255,140,200,.8)', '#ffd8ec', 12);
+
+  // 가는 구분선
+  g.shadowColor = NEON_PINK; g.shadowBlur = 14;
+  g.fillStyle = 'rgba(255,140,200,.75)';
+  g.fillRect(L.barX, mid - 26, 3, 52);
+  g.shadowBlur = 0; g.shadowColor = 'transparent';
+
+  g.font = L.font;
+  const base = centerBaseline(g, mid);
+
+  if (!L.marquee) {
+    neonText(g, L.title, L.left, base, NEON_PINK, NEON_PALE, 18);
+    world.neonTexture.needsUpdate = true;
+    return;
+  }
+
+  // 흐르는 제목 — 보이는 창 밖으로 번짐까지 새지 않게 잘라 두고 그린다
+  const span = L.w + L.gap;
+  g.save();
+  g.beginPath();
+  g.rect(L.left, 0, L.avail, H);
+  g.clip();
+  // 한 바퀴 돌면 제자리 — 꼬리가 나가는 동안 머리가 들어오도록 두 벌 이상 그린다
+  let x = L.left - (neonPhase % span);
+  while (x < L.left + L.avail) {
+    neonText(g, L.title, x, base, NEON_PINK, NEON_PALE, 18);
+    x += span;
+  }
+  g.restore();
+  fadeNeonEdges(g, L.left, L.avail, H);
+
+  world.neonTexture.needsUpdate = true;
+}
+
+/* 프레임마다 조금씩 밀어 준다 — 다시 그리는 건 20fps 면 충분하다 */
+function stepNeon(dt) {
+  if (!neonLayout || !neonLayout.marquee) return;
+  neonPhase += NEON_SPEED * dt;
+  neonTick += dt;
+  if (neonTick < 0.05) return;
+  neonTick = 0;
+  drawNeon();
 }
 
 $('playBtn').addEventListener('click', () => {
@@ -941,14 +1341,19 @@ $('plAddInput').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); addTrack(); }
 });
 
-/* 방 제목 인라인 편집 (연필) */
-$('titleEdit').addEventListener('click', () => {
+/* 방 제목 인라인 편집 — 들어가는 문이 셋이다.
+ *   제목 옆 연필(고칠 수 있다는 표시) · 제목 글자 클릭 · 설정 메뉴의 '방 제목 수정' */
+$('titleEdit').addEventListener('click', () => startTitleEdit());
+$('roomTitle').addEventListener('click', () => startTitleEdit());
+
+function startTitleEdit() {
   if (!canCtl() || !room) return;
   const inp = $('titleInput');
   inp.value = room.title || '';
-  $('roomTitle').hidden = true; $('titleEdit').hidden = true;
+  $('roomTitle').hidden = true;
+  $('titleEdit').hidden = true;
   inp.hidden = false; inp.focus(); inp.select();
-});
+}
 function commitTitle(save) {
   const inp = $('titleInput');
   if (inp.hidden) return;
@@ -1050,13 +1455,27 @@ const drag = { on: false, moved: 0, lx: 0, ly: 0, t0: 0, button: 0 };
 const chatInput = $('chatInput');
 chatInput.addEventListener('focus', () => { typing = true; clearUnread(); });
 chatInput.addEventListener('blur', () => { typing = false; });
+/* keepFocus — 전송 버튼으로 보낼 땐 입력칸을 놓지 않는다.
+ * 폰에서 한 줄 보낼 때마다 키보드가 내려가면 이어 치기가 번거롭다. */
+function sendChat(keepFocus) {
+  const v = chatInput.value.trim();
+  if (v) send({ t: 'chat', txt: v });
+  chatInput.value = '';
+  if (!keepFocus) chatInput.blur();
+}
+
 chatInput.addEventListener('keydown', (e) => {
   e.stopPropagation();
-  if (e.key === 'Enter') {
-    const v = chatInput.value.trim();
-    if (v) send({ t: 'chat', txt: v });
-    chatInput.value = ''; chatInput.blur();
-  } else if (e.key === 'Escape') { chatInput.value = ''; chatInput.blur(); }
+  if (e.key === 'Enter') sendChat(false);          // Enter 는 보내고 조작으로 돌아간다
+  else if (e.key === 'Escape') { chatInput.value = ''; chatInput.blur(); }
+});
+
+// mousedown 을 막아야 버튼을 눌러도 입력칸이 포커스를 잃지 않는다
+$('chatSend').addEventListener('mousedown', (e) => e.preventDefault());
+$('chatSend').addEventListener('click', (e) => {
+  e.preventDefault();
+  sendChat(true);
+  chatInput.focus();
 });
 
 window.addEventListener('keydown', (e) => {
@@ -1072,7 +1491,7 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   if (e.key === 'Enter') {
-    if (chatMin) setChatMin(false);
+    // 입력칸은 접혀 있어도 보이므로 굳이 펼치지 않는다
     chatInput.focus();
     e.preventDefault();
     return;
@@ -1282,11 +1701,30 @@ function updateDarts(dt) {
   }
 }
 
+/* ---- 상단 컨트롤러 접기 --------------------------------------------
+ *  아래쪽 화살표를 누르면 컨트롤러가 위로 빠지고 화살표 줄만 남는다.
+ *  재생 중에도 방을 넓게 보고 싶을 때가 있다. 탭에 기억해 둔다.
+ * ------------------------------------------------------------------ */
+let barMin = (() => {
+  try { return sessionStorage.getItem('weech.bar') === '1'; } catch (e) { return false; }
+})();
+
+function setBarMin(min) {
+  barMin = min;
+  $('playerbar').classList.toggle('min', min);
+  $('barToggle').setAttribute('aria-expanded', min ? 'false' : 'true');
+  try { sessionStorage.setItem('weech.bar', min ? '1' : '0'); } catch (e) { /* 무시 */ }
+}
+$('barToggle').addEventListener('click', (e) => { e.stopPropagation(); setBarMin(!barMin); });
+setBarMin(barMin);                 // 새로고침해도 접어 둔 상태를 지킨다
+
 /* ------------------------------------------------------------------ */
 /* 시청 모드 (1인칭)                                                     */
 /* ------------------------------------------------------------------ */
 function jump() {
-  if (screen !== 'room' || !me.grounded) return;
+  if (screen !== 'room') return;
+  if (mySeat >= 0) { standUp(); return; }
+  if (!me.grounded) return;
   me.vy = JUMP_V;
   me.grounded = false;
 }
@@ -1295,8 +1733,11 @@ function jump() {
 function updateViewUI() {
   const mode = cam.mode;
   const btn = $('viewBtn');
+  const label = mode === 'watch' ? '1인칭 시점' : mode === 'cinema' ? '전체화면' : '3인칭 시점';
   btn.classList.toggle('on', mode !== 'lounge');
-  btn.textContent = (mode === 'watch' ? '1인칭 시점' : mode === 'cinema' ? '전체화면' : '3인칭 시점') + ' ▾';
+  // 눈 아이콘이라 글자가 없다 — 지금 시점은 툴팁과 드롭다운 표시로 알린다
+  btn.title = '시점 — ' + label;
+  btn.setAttribute('aria-label', '시점 — ' + label);
   $('viewDrop').querySelectorAll('button[data-view]').forEach((b) => {
     b.classList.toggle('active',
       (b.dataset.view === 'first' && mode === 'watch') ||
@@ -1328,8 +1769,16 @@ function setWatchMode(on) {
 
 /* 보기 모드 드롭다운 */
 const viewBtn = $('viewBtn'), viewDrop = $('viewDrop');
-function openView(open) { viewDrop.hidden = !open; viewBtn.classList.toggle('open', open); }
-viewBtn.addEventListener('click', (e) => { e.stopPropagation(); openView(viewDrop.hidden); });
+function openView(open) {
+  viewDrop.hidden = !open;
+  viewBtn.classList.toggle('open', open);
+  viewBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+viewBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  openSet(false); openShare(false);                      // 설정 메뉴와 겹치지 않게
+  openView(viewDrop.hidden);
+});
 viewDrop.addEventListener('click', (e) => {
   const b = e.target.closest('button[data-view]');
   if (!b) return;
@@ -1378,7 +1827,6 @@ document.addEventListener('webkitfullscreenchange', onFsChange);
 /* 터치 기기용 — 키보드가 없는 환경에서 점프와 화살 */
 $('touchJump').addEventListener('click', (e) => { e.preventDefault(); jump(); });
 $('touchArrow').addEventListener('click', (e) => { e.preventDefault(); shootForward(); });
-$('helpBtn').addEventListener('click', () => { $('helpModal').hidden = false; });
 
 /* ------------------------------------------------------------------ */
 /* 갱신                                                                 */
@@ -1402,6 +1850,12 @@ function update(dt, now) {
     if (keys['d']) fx += 1;
   }
   if (fx || fz) moveTarget = null;
+
+  // 앉은 채로 움직이려 하면 먼저 일어선다
+  if (mySeat >= 0) {
+    if (fx || fz || moveTarget) standUp();
+    else { me.st = 2; me.vy = 0; me.grounded = true; }
+  }
 
   /* 방향키로 시점 회전 (마우스 드래그와 같은 방향) */
   if (!typing) {
@@ -1434,7 +1888,8 @@ function update(dt, now) {
     else { vx = dx / d; vz = dz / d; }
   }
 
-  const moving = !!(vx || vz);
+  const seated = mySeat >= 0;
+  const moving = !seated && !!(vx || vz);
   if (moving) {
     const l = Math.hypot(vx, vz) || 1;
     const nx = me.x + (vx / l) * SPEED * dt;
@@ -1444,18 +1899,24 @@ function update(dt, now) {
     me.x = p.x; me.z = p.z;
     me.dir = Math.atan2(vx, vz);
     me.st = 1;
-  } else me.st = 0;
+  } else if (!seated) me.st = 0;
 
-  /* 점프 — 위아래 */
-  me.vy -= GRAVITY * dt;
-  me.y += me.vy * dt;
-  const ground = R.groundAt(me.x, me.z);
-  if (me.y <= ground) {                    // 착지
-    me.y = ground;
-    me.vy = 0;
-    me.grounded = true;
+  if (seated) {
+    me.fy = me.y;                          // 앉아 있는 동안은 떨어지지 않는다
   } else {
-    me.grounded = false;
+    /* 점프 — 위아래 */
+    me.vy -= GRAVITY * dt;
+    me.y += me.vy * dt;
+    const ground = R.groundAt(me.x, me.z);
+    if (me.y <= ground) {                  // 착지
+      me.y = ground;
+      me.vy = 0;
+      me.grounded = true;
+    } else {
+      me.grounded = false;
+    }
+    me.fy = ground;                        // 아바타가 단 위를 '공중' 으로 보지 않게
+    trySit();                              // 의자 앞 구역에 겹치면 그대로 앉는다
   }
 
   for (const g of others.values()) {
@@ -1531,7 +1992,10 @@ function update(dt, now) {
   }
 
   if (myAvatar) myAvatar.update(me, dt, now / 1000, cam.mode !== 'lounge');
-  for (const g of others.values()) g.av.update(g, dt, now / 1000, false);
+  for (const g of others.values()) {
+    g.fy = R.groundAt(g.x, g.z);
+    g.av.update(g, dt, now / 1000, false);
+  }
 
   if (now - sendAt > 90) {
     sendAt = now;
@@ -1555,6 +2019,7 @@ function frame(now) {
   try {
     update(dt, now);
     world.update(now / 1000, !!(room && room.playing));
+    if (screen === 'room') stepNeon(dt);      // 네온 간판의 긴 제목 흘리기
 
     // 전광판은 재생 중일 때만 다시 그린다 (막대 애니메이션 때문)
     // 멈춰 있으면 내용이 바뀔 때만 그리므로 텍스처를 매번 올리지 않는다
@@ -1579,9 +2044,8 @@ requestAnimationFrame(frame);
   if (!m) return;
   const code = m[1].toUpperCase();
   $('joinCode').value = code;
-  $('inviteNote').textContent = '초대받은 방 ' + code + ' — 닉네임만 적고 입장하세요.';
+  $('inviteNote').textContent = '초대받은 방 ' + code + ' — 입장을 누르면 바로 들어갑니다.';
   $('inviteNote').hidden = false;
-  setTimeout(() => $('joinName').focus(), 100);
 })();
 
 /* 새로고침 직후라면 — 로비가 잠깐 비치는 대신 돌아가는 중임을 알린다 */

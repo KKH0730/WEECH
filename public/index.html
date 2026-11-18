@@ -33,11 +33,6 @@
     </div>
 
     <div class="panel" id="panel-join">
-      <label class="field">
-        <span>닉네임</span>
-        <input id="joinName" type="text" maxlength="12" placeholder="여기서 불릴 이름" autocomplete="off" />
-      </label>
-
       <div class="roomlist-head">
         <span>열려 있는 방</span>
         <span id="roomCount" class="dim">—</span>
@@ -54,10 +49,6 @@
     </div>
 
     <div class="panel" id="panel-create" hidden>
-      <label class="field">
-        <span>닉네임</span>
-        <input id="newName" type="text" maxlength="12" placeholder="방장으로 불릴 이름" autocomplete="off" />
-      </label>
       <label class="field">
         <span>방 제목</span>
         <input id="newTitle" type="text" maxlength="40" placeholder="예) 삼성전자 존버방 / 새벽 음악 감상" autocomplete="off" />
@@ -83,21 +74,12 @@
     <div class="room-id">
       <div class="title-line">
         <strong id="roomTitle">방 제목</strong>
-        <button id="titleEdit" class="tedit" title="방 제목 변경" hidden aria-label="방 제목 변경">
+        <button id="titleEdit" class="tedit" title="방 제목 수정" hidden aria-label="방 제목 수정">
           <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>
           </svg>
         </button>
         <input id="titleInput" type="text" maxlength="40" autocomplete="off" hidden />
-      </div>
-      <div class="meta">
-        <button id="codeBtn" class="codechip" title="누르면 입장 코드가 복사됩니다">
-          <span class="lbl">입장 코드</span>
-          <b id="roomCode">-----</b>
-          <span class="ico">⧉</span>
-        </button>
-        <button id="inviteBtn" class="pill tiny" title="이 방으로 바로 들어오는 링크를 복사합니다"><span class="bi">🔗</span><span class="bt"> 초대 링크 복사</span></button>
-        <span class="who">방장 <b id="roomHost">—</b></span>
       </div>
     </div>
     <div class="top-btns">
@@ -109,22 +91,67 @@
           <option value="">자막 언어</option>
         </select>
       </div>
-      <div id="viewMenu">
-        <button id="viewBtn" class="pill" title="보기 모드">3인칭 시점 ▾</button>
-        <div id="viewDrop" hidden>
-          <button data-view="first">1인칭 시점</button>
-          <button data-view="third">3인칭 시점</button>
-          <button data-view="cinema">전체화면</button>
+      <!-- 오른쪽 세로 아이콘 열 — 나가기 · 설정 · 시점 -->
+      <div id="iconCol">
+        <button id="leaveBtn" class="icon leave" title="방에서 나가기" aria-label="나가기">
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>
+          </svg>
+        </button>
+        <div id="setMenu">
+          <button id="setBtn" class="icon" title="설정" aria-label="설정" aria-expanded="false">
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="3.1"/>
+              <path d="M19.6 14.6a1.6 1.6 0 0 0 .32 1.77l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.6 1.6 0 0 0-1.77-.32 1.6 1.6 0 0 0-.97 1.47V21a2 2 0 0 1-4 0v-.1a1.6 1.6 0 0 0-1.05-1.47 1.6 1.6 0 0 0-1.77.32l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.6 1.6 0 0 0 .32-1.77 1.6 1.6 0 0 0-1.47-.97H3a2 2 0 0 1 0-4h.1a1.6 1.6 0 0 0 1.47-1.05 1.6 1.6 0 0 0-.32-1.77l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.6 1.6 0 0 0 1.77.32H9a1.6 1.6 0 0 0 .97-1.47V3a2 2 0 0 1 4 0v.1a1.6 1.6 0 0 0 .97 1.47 1.6 1.6 0 0 0 1.77-.32l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.6 1.6 0 0 0-.32 1.77V9a1.6 1.6 0 0 0 1.47.97H21a2 2 0 0 1 0 4h-.1a1.6 1.6 0 0 0-1.47.97Z"/>
+            </svg>
+          </button>
+
+          <div id="setDrop" hidden>
+            <button id="miTitle" class="smi" hidden>
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>
+              </svg>
+              <span>방 제목 수정</span>
+            </button>
+            <button id="miHelp" class="smi">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="9.3"/><path d="M9.7 9.3a2.4 2.4 0 1 1 3.1 2.4c-.6.2-.9.8-.9 1.4v.4"/>
+                <circle cx="12" cy="17" r=".95" fill="currentColor" stroke="none"/>
+              </svg>
+              <span>도움말</span>
+            </button>
+            <button id="miShare" class="smi">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+                <line x1="8.6" y1="13.5" x2="15.4" y2="17.5"/><line x1="15.4" y1="6.5" x2="8.6" y2="10.5"/>
+              </svg>
+              <span>공유</span>
+            </button>
+          </div>
+
+          <div id="shareDrop" hidden>
+            <button id="codeBtn" class="codechip" title="누르면 입장 코드가 복사됩니다">
+              <span class="lbl">입장 코드</span>
+              <b id="roomCode">-----</b>
+              <span class="ico">⧉</span>
+            </button>
+            <button id="inviteBtn" class="pill tiny" title="이 방으로 바로 들어오는 링크를 복사합니다"><span class="bi">🔗</span><span class="bt"> 초대 링크 복사</span></button>
+          </div>
+        </div>
+        <div id="viewMenu">
+          <button id="viewBtn" class="icon view" title="시점 — 3인칭" aria-label="시점" aria-expanded="false">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M1.6 12S5.4 5.2 12 5.2 22.4 12 22.4 12 18.6 18.8 12 18.8 1.6 12 1.6 12Z"/>
+              <circle cx="12" cy="12" r="3.1"/>
+            </svg>
+          </button>
+          <div id="viewDrop" hidden>
+            <button data-view="first">1인칭 시점</button>
+            <button data-view="third">3인칭 시점</button>
+            <button data-view="cinema">전체화면</button>
+          </div>
         </div>
       </div>
-      <button id="playlistBtn" class="icon" title="재생목록 관리" hidden aria-label="재생목록">
-        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-          <line x1="3" y1="6" x2="15" y2="6"/><line x1="3" y1="12" x2="15" y2="12"/>
-          <line x1="3" y1="18" x2="11" y2="18"/><path d="M18 9v8"/><path d="M18 17a2 2 0 1 1-2-2" fill="currentColor"/>
-        </svg>
-      </button>
-      <button id="helpBtn" class="icon" title="도움말 (?)">?</button>
-      <button id="leaveBtn" class="icon leave" title="나가기">나가기</button>
     </div>
   </div>
 
@@ -138,9 +165,15 @@
         <button id="fwd10" class="seekbtn" title="10초 앞으로">+10</button>
         <button id="fwd30" class="seekbtn" title="30초 앞으로">+30</button>
         <button id="nextBtn" title="다음 영상">⏭</button>
+        <span class="vsep"></span>
+        <button id="playlistBtn" class="icon" title="재생목록 관리" hidden aria-label="재생목록">
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <line x1="3" y1="6" x2="15" y2="6"/><line x1="3" y1="12" x2="15" y2="12"/>
+            <line x1="3" y1="18" x2="11" y2="18"/><path d="M18 9v8"/><path d="M18 17a2 2 0 1 1-2-2" fill="currentColor"/>
+          </svg>
+        </button>
       </div>
       <div id="guestNote">방장이 재생을 조작합니다</div>
-      <div id="nowPlaying"><span id="npText">—</span></div>
     </div>
     <div id="seekRow">
       <span id="curTime" class="tlabel">0:00</span>
@@ -150,28 +183,39 @@
       </div>
       <span id="durTime" class="tlabel">0:00</span>
     </div>
+    <button id="barToggle" title="컨트롤러 접기 / 펼치기" aria-label="컨트롤러 접기 / 펼치기">
+      <svg class="arr" viewBox="0 0 16 10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M1.5 7.5 8 2.5 14.5 7.5"/>
+      </svg>
+    </button>
   </div>
 
   <div id="people">
     <button id="peopleToggle" title="이 방에 있는 사람들">
       <span class="chev">▸</span>
-      <span class="ppl">👥</span>
-      <b id="roomPeople">1</b><span class="cap">/ 20명</span>
+      <span class="lbl">참여자</span>
+      <span class="num"><b id="roomPeople">1</b><span class="cap">/20</span></span>
     </button>
     <div id="peopleList" hidden></div>
+    <div id="pmenu" hidden></div>
   </div>
 
-  <div id="chat">
-    <button id="chatHead" title="접기 / 펼치기">
-      <span class="ic">💬</span>
-      <span class="t">채팅</span>
-      <span id="chatUnread" class="unread" hidden>0</span>
-      <span class="min">—</span>
+  <div id="chat" class="min">
+    <button id="chatToggle" title="채팅 내역 접기 / 펼치기" aria-label="채팅 내역 접기 / 펼치기">
+      <svg class="arr" viewBox="0 0 16 10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M1.5 2.5 8 7.5 14.5 2.5"/>
+      </svg>
     </button>
+    <span id="chatUnread" class="unread" hidden>0</span>
     <div id="chatBody">
       <div id="chatlog"></div>
       <div id="chatbar">
         <input id="chatInput" type="text" maxlength="120" placeholder="메시지를 입력하세요 (Enter)" autocomplete="off" />
+        <button id="chatSend" title="보내기" aria-label="보내기">
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>
+          </svg>
+        </button>
       </div>
     </div>
   </div>
@@ -199,8 +243,9 @@
       <tr><td><kbd>F</kbd></td><td>바라보는 쪽으로 화살 발사</td></tr>
       <tr><td><kbd>V</kbd></td><td><b>시청 모드</b> — 눈높이 1인칭으로 TV 를 봅니다</td></tr>
       <tr><td><kbd>Enter</kbd></td><td>채팅 입력 / 전송</td></tr>
+      <tr><td colspan="2" class="hint">의자 앞에 서면 <b>자동으로 앉습니다</b>. 움직이거나 <kbd>Space</kbd> 를 누르면 일어섭니다.</td></tr>
       <tr><td><kbd>Esc</kbd></td><td>창 닫기 · 시청 모드 나가기</td></tr>
-      <tr><td><kbd>?</kbd></td><td>이 도움말</td></tr>
+      <tr><td><kbd>?</kbd></td><td>이 도움말 (우상단 <b>⚙</b> → 도움말)</td></tr>
     </table>
     <h3>방 안의 것들</h3>
     <ul>
@@ -220,6 +265,12 @@
       <li>화면을 <b>끌면</b> 시점이 돌아갑니다</li>
       <li>오른쪽 아래 <b>⤒ 점프</b> · <b>🎯 화살</b> 버튼이 키보드를 대신합니다</li>
       <li>소리가 안 나면 화면의 <b>🔈 소리 켜기</b> 를 눌러 주세요 (폰은 자동재생을 막습니다)</li>
+    </ul>
+    <h3>이름</h3>
+    <ul>
+      <li>입장할 때 <b>이름이 자동으로 지어집니다</b> — 로비에서 닉네임을 묻지 않습니다</li>
+      <li>왼쪽 <b>참여자</b> 목록에서 내 줄의 <b>✎</b> 를 누르면 이름을 바꿀 수 있습니다</li>
+      <li>방장·부방장은 <b>좌상단 방 제목을 눌러</b> 바로 고칠 수 있습니다 (⚙ 메뉴에도 있습니다)</li>
     </ul>
     <p class="note">재생 위치는 모두에게 자동으로 맞춰집니다. 1.5초 이상 어긋나면 알아서 따라붙습니다.</p>
     <button class="close" data-close="helpModal">닫기</button>

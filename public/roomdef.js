@@ -42,6 +42,8 @@ const ROOM3D = (function () {
   const TV = { w: 12.0, h: 6.75, wall: 'north', u: 0, y: 4.5 };      // 16:9 — 극장 스크린 크기
   //  스크린 바로 오른쪽, 같은 정면 벽에 세로로 길게 세운다.
   const BOARD = { w: 2.8, h: 6.0, wall: 'north', u: 8.1, y: 4.875 };  // 재생목록 — 스크린 오른쪽, 윗변 맞춤
+  //  스크린 윗변(7.875)과 천장(8.8) 사이 0.925m 에 거는 네온 간판. 지금 트는 곡을 띄운다.
+  const NEON = { w: 9.0, h: 0.70, wall: 'north', u: 0, y: 8.30 };
 
   // 실버 · 골드 버튼 — 왼쪽 벽
   const plaques = [
@@ -67,31 +69,59 @@ const ROOM3D = (function () {
     { wall: 'left', u: 4.9, y: 4.6, w: 1.5, h: 2.0, hue: 170 }
   ];
 
-  /* ---- 바닥에 놓인 것들 ------------------------------------------ */
-  const CARPETS = [
-    { x: 0, z: 0.6, w: 15.0, d: 7.2 },     // TV 앞 큰 러그
-    { x: 0, z: 5.5, w: 12.0, d: 4.2 }      // 뒤쪽 라운지 러그
-  ];
-  const CARPET = CARPETS[0];               // 호환용
+  /* ---- 바닥에 놓인 것들 ------------------------------------------
+   *  영화관 좌석. 1인용 의자만 줄줄이 놓고, 뒷줄로 갈수록 한 단씩 올린다.
+   *
+   *          ┌─────── 스크린 ───────┐
+   *      ·  · · · ·   통로   · · · ·  ·     1열  바닥
+   *      ·  · · · ·   통로   · · · ·  ·     2열  +12cm
+   *      ·  · · · ·   통로   · · · ·  ·     3열  +24cm
+   *      ·  · · · ·   통로   · · · ·  ·     4열  +36cm
+   *      ·  · · · ·   통로   · · · ·  ·     5열  +48cm
+   *
+   *  단 높이를 STEP(12cm)에 맞춰 두어 그냥 걸어 올라갈 수 있다.
+   *  rot = y축 회전(라디안). 0 이면 등받이가 +z 쪽, 즉 TV 를 바라본다.
+   * ---------------------------------------------------------------- */
+  const CINEMA = {
+    rows: 5,                 // 줄 수
+    perSide: 5,              // 통로 한쪽당 좌석 수
+    z0: -2.4,                // 맨 앞줄 z
+    rowGap: 1.6,             // 줄 간격 — 의자 깊이 0.85 를 빼면 0.75 가 다리 공간
+    aisle: 1.0,              // 가운데 통로 반폭
+    seatGap: 1.15,           // 좌석 간격
+    rise: 0.12,              // 한 단 높이 (STEP 과 같아 걸어서 올라간다)
+    seat: { w: 0.8, d: 0.85 },
+    top: 0.46                // 의자 앉는 면 높이
+  };
 
-  //  rot = y축 회전(라디안). 0 이면 등받이가 +z 쪽(남쪽), 즉 TV 를 바라본다.
-  const furniture = [
-    // ── TV 앞 자리
-    { id: 'sofaL', type: 'sofa', x: -4.4, z: 0.6, rot: 0, w: 3.2, d: 1.15 },
-    { id: 'sofaR', type: 'sofa', x: 4.4, z: 0.6, rot: 0, w: 3.2, d: 1.15 },
-    { id: 'sofaC', type: 'sofa', x: 0, z: 2.1, rot: 0, w: 4.0, d: 1.15 },
-    { id: 'table', type: 'table', x: 0, z: -0.4, rot: 0, w: 2.6, d: 1.2 },
-    { id: 'chairL', type: 'chair', x: -8.2, z: -0.4, rot: 0.7, w: 0.95, d: 0.95 },
-    { id: 'chairR', type: 'chair', x: 8.2, z: -0.4, rot: -0.7, w: 0.95, d: 0.95 },
+  const furniture = [];
+  const CARPETS = [];
 
-    // ── 뒤쪽 라운지
-    { id: 'sofaB1', type: 'sofa', x: -5.5, z: 5.4, rot: 0, w: 3.2, d: 1.15 },
-    { id: 'sofaB2', type: 'sofa', x: 5.5, z: 5.4, rot: 0, w: 3.2, d: 1.15 },
-    { id: 'table2', type: 'table', x: 0, z: 5.4, rot: 0, w: 2.2, d: 1.1 },
-    { id: 'chairB1', type: 'chair', x: -2.4, z: 5.6, rot: 2.5, w: 0.95, d: 0.95 },
-    { id: 'chairB2', type: 'chair', x: 2.4, z: 5.6, rot: -2.5, w: 0.95, d: 0.95 },
+  for (let r = 0; r < CINEMA.rows; r++) {
+    const z = CINEMA.z0 + r * CINEMA.rowGap;
+    const y = r * CINEMA.rise;                     // 이 줄의 바닥 높이
+    // 단 — 줄마다 한 장. 1열은 바닥이라 깔지 않는다
+    if (r > 0) {
+      furniture.push({
+        id: 'tier' + r, type: 'step', x: 0, z: z - 0.1, rot: 0,
+        w: 15.0, d: CINEMA.rowGap + 0.2, y: 0, top: y
+      });
+    }
+    // 좌석 — 가운데 통로를 비우고 좌우 대칭으로
+    for (let sgn = -1; sgn <= 1; sgn += 2) {
+      for (let i = 0; i < CINEMA.perSide; i++) {
+        const x = sgn * (CINEMA.aisle + CINEMA.seat.w / 2 + 0.25 + i * CINEMA.seatGap);
+        furniture.push({
+          id: 'seat' + r + (sgn < 0 ? 'L' : 'R') + i, type: 'chair',
+          x: x, z: z, rot: 0, w: CINEMA.seat.w, d: CINEMA.seat.d,
+          y: y, top: y + CINEMA.top, row: r
+        });
+      }
+    }
+  }
 
-    // ── 가장자리
+  // ── 가장자리 (좌석과 무관하게 벽을 따라 둔다)
+  furniture.push(
     { id: 'shelf1', type: 'shelf', x: -10.6, z: -3.5, rot: 0, w: 0.55, d: 3.2 },
     { id: 'shelf2', type: 'shelf', x: -10.6, z: 3.5, rot: 0, w: 0.55, d: 3.2 },
     { id: 'plantA', type: 'plant', x: 10.0, z: -6.6, rot: 0, w: 0.9, d: 0.9 },
@@ -100,7 +130,9 @@ const ROOM3D = (function () {
     { id: 'plantD', type: 'plant', x: -10.0, z: 6.6, rot: 0, w: 0.9, d: 0.9 },
     { id: 'standA', type: 'speaker', x: -8.6, z: -7.2, rot: 0.35, w: 0.55, d: 0.55 },
     { id: 'standB', type: 'speaker', x: 8.6, z: -7.2, rot: -0.35, w: 0.55, d: 0.55 }
-  ];
+  );
+
+  const CARPET = CARPETS[0];               // 호환용
 
   /* ---- 간접 조명 --------------------------------------------------
    *  세워 두는 스탠드 대신 건축 조명만 쓴다. 바닥에 장애물이 없어진다.
@@ -120,7 +152,8 @@ const ROOM3D = (function () {
     ceil: 46,           // 천장 코브
     floor: 6.5,         // 하단 간접 (영화관 통로등)
     tv: 6.5,            // 화면이 뿜는 빛 — 방에서 가장 밝은 것
-    board: 1.9          // 전광판
+    board: 1.9,         // 전광판
+    neon: 2.4           // 스크린 위 네온 간판
   };
 
   const COVE = { inset: 0.75, y: H - 0.3, w: 0.14 };       // 천장 코브 띠
@@ -139,7 +172,7 @@ const ROOM3D = (function () {
 
   const lamps = [];   // 스탠드 없음 (옛 코드 호환용)
 
-  const spawn = { x: 0, z: 3.6 };   // 두 자리 사이, TV 를 마주 보는 통로
+  const spawn = { x: 0, z: 6.2 };   // 맨 뒷줄 뒤, 전체가 보이는 입구 쪽
 
   /* ---- 충돌 ------------------------------------------------------
    *  가구를 '회전한 사각형(OBB)' 그대로 다룬다. 외접 사각형으로 근사하면
@@ -147,13 +180,14 @@ const ROOM3D = (function () {
    *  top = 그 가구의 올라설 수 있는 높이. 그보다 높이 떠 있으면 통과한다.
    * ---------------------------------------------------------------- */
   const TOP = {            // 가구별 윗면 높이 (m)
-    sofa: 0.45, chair: 0.46, table: 0.46,
+    chair: 0.46, step: 0.12,
     shelf: 1.55, plant: 1.10, speaker: 1.05
   };
 
   const solids = [];
   furniture.forEach((f) => {
-    solids.push({ x: f.x, z: f.z, w: f.w, d: f.d, rot: f.rot, top: TOP[f.type] || 1.0, id: f.id });
+    const top = (f.top !== undefined) ? f.top : (TOP[f.type] || 1.0);
+    solids.push({ x: f.x, z: f.z, w: f.w, d: f.d, rot: f.rot, top: top, id: f.id });
   });
   // 스탠드가 없으므로 바닥을 막는 것은 가구뿐이다
 
@@ -222,29 +256,52 @@ const ROOM3D = (function () {
     return { x: s * fz - c * fx, z: c * fz + s * fx };
   }
 
-  /* 앉을 수 있는 자리 — 소파/의자 앞쪽 가장자리 */
+  /* ---- 앉는 자리 --------------------------------------------------
+   *  의자 하나가 자리 하나. 각 자리 앞(다리 공간)에 '들어서면 앉는 구역'을 둔다.
+   *  의자 자체는 막혀 있어 걸어 들어갈 수 없으므로, 구역은 의자 바로 앞에 깐다.
+   *
+   *        ┌──────┐   ← 의자 (막힘)
+   *        ┊ 구역 ┊   ← 여기 들어서면 자동으로 앉는다
+   *          통로
+   * ------------------------------------------------------------------ */
+  const SEAT_ZONE = { w: 0.42, d: 0.14, off: 0.78 };   // 반폭 · 반깊이 · 의자에서 앞으로
+
   const seats = [];
   furniture.forEach((f) => {
-    if (f.type === 'sofa') {
-      const n = Math.max(2, Math.round(f.w / 0.95));
-      for (let i = 0; i < n; i++) {
-        const off = (i - (n - 1) / 2) * (f.w / n);
-        seats.push({ x: f.x + off, z: f.z - 0.1, rot: f.rot });
-      }
-    } else if (f.type === 'chair') {
-      seats.push({ x: f.x, z: f.z, rot: f.rot });
-    }
+    if (f.type !== 'chair') return;
+    seats.push({
+      i: seats.length,
+      id: f.id,
+      x: f.x, z: f.z - 0.04, rot: f.rot,      // 앉았을 때 설 자리
+      y: f.y || 0,                            // 그 줄의 바닥 높이
+      row: f.row || 0,
+      zx: f.x, zz: f.z - SEAT_ZONE.off,       // 감지 구역 한가운데
+      zw: SEAT_ZONE.w, zd: SEAT_ZONE.d
+    });
   });
+
+  /* 발밑 (x,z) 가 어느 자리의 감지 구역 안인가 — 없으면 -1.
+   *  y 는 발 높이. 단이 다른 줄의 구역에 잘못 걸리지 않게 같은 높이만 본다. */
+  function seatAt(x, z, y) {
+    const feet = y || 0;
+    for (let i = 0; i < seats.length; i++) {
+      const st = seats[i];
+      if (Math.abs(st.y - feet) > 0.09) continue;
+      if (Math.abs(x - st.zx) <= st.zw && Math.abs(z - st.zz) <= st.zd) return i;
+    }
+    return -1;
+  }
 
   return {
     W: W, D: D, H: H, WALL: WALL, BOUND: BOUND,
     placeOnWall: placeOnWall,
-    TV: TV, BOARD: BOARD, plaques: plaques, frames: frames,
+    TV: TV, BOARD: BOARD, NEON: NEON, plaques: plaques, frames: frames,
     CARPET: CARPET, CARPETS: CARPETS, furniture: furniture, lamps: lamps, solids: solids,
     LIGHT: LIGHT,
     COVE: COVE, STRIP: STRIP, CEIL_LIGHTS: CEIL_LIGHTS, FLOOR_LIGHTS: FLOOR_LIGHTS,
     PROJECTOR: PROJECTOR,
-    seats: seats, spawn: spawn, collide: collide, moveVector: moveVector,
+    seats: seats, seatAt: seatAt, SEAT_ZONE: SEAT_ZONE, CINEMA: CINEMA,
+    spawn: spawn, collide: collide, moveVector: moveVector,
     groundAt: groundAt, TOP: TOP, STEP: STEP,
     BOX_DEPTH: BOX_DEPTH, PLATE_DEPTH: PLATE_DEPTH, FACE_Z: FACE_Z
   };

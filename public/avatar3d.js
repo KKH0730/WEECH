@@ -80,6 +80,7 @@ export function makeAvatar(opts) {
   const legL = new THREE.Mesh(legGeo, dark); legL.position.set(-0.1, 0.2, 0);
   const legR = new THREE.Mesh(legGeo, dark); legR.position.set(0.1, 0.2, 0);
   body.add(legL, legR);
+  const legY = legL.position.y, legZ = legL.position.z;
 
   // 팔
   const armGeo = new THREE.CapsuleGeometry(0.058, 0.2, 4, 10);
@@ -204,7 +205,9 @@ export function makeAvatar(opts) {
       bubbleT = 0;
     },
 
-    /* p = {x, z, dir, st}  (dir: y축 회전, st: 1 이면 걷는 중) */
+    /* p = {x, z, dir, st}  (dir: y축 회전, st: 1 걷는 중 · 2 앉은 중)
+     *  p.fy = 발이 딛고 선 바닥 높이. 영화관 단 위에서도 '점프 중' 으로 보지 않으려면
+     *  p.y 를 그대로 보지 말고 바닥과의 차이를 봐야 한다. */
     update(p, dt, t, hidden) {
       root.visible = !hidden;
       root.position.x = p.x;
@@ -212,18 +215,30 @@ export function makeAvatar(opts) {
       root.position.z = p.z;
       root.rotation.y = p.dir;
 
-      const walking = p.st === 1;
+      const sitting = p.st === 2;
+      const walking = p.st === 1 && !sitting;
       stride += dt * (walking ? 11 : 0);
       const sw = Math.sin(stride);
       legL.rotation.x = walking ? sw * 0.6 : 0;
       legR.rotation.x = walking ? -sw * 0.6 : 0;
       armL.rotation.x = walking ? -sw * 0.5 : 0;
       armR.rotation.x = walking ? sw * 0.5 : 0;
-      const air = (p.y || 0) > 0.03;
+      const air = !sitting && ((p.y || 0) - (p.fy || 0)) > 0.03;
       body.position.y = air ? 0.02 : (walking ? Math.abs(Math.sin(stride)) * 0.045 : Math.sin(t * 1.6 + ph) * 0.012);
       if (air) {                                 // 공중에서는 다리를 모으고 팔을 든다
         legL.rotation.x = -0.35; legR.rotation.x = 0.2;
         armL.rotation.x = -0.9; armR.rotation.x = -0.9;
+      }
+      if (sitting) {
+        // 엉덩이를 방석 높이로 내리고 허벅지를 앞으로 접는다
+        body.position.y = -0.235;
+        legL.position.set(-0.1, legY + 0.2, legZ - 0.14);
+        legR.position.set(0.1, legY + 0.2, legZ - 0.14);
+        legL.rotation.x = legR.rotation.x = -1.32;
+        armL.rotation.x = armR.rotation.x = -0.22;
+      } else if (legL.position.z !== legZ) {
+        legL.position.set(-0.1, legY, legZ);
+        legR.position.set(0.1, legY, legZ);
       }
       head.rotation.z = walking ? sw * 0.04 : Math.sin(t * 1.2 + ph) * 0.02;
 
@@ -240,7 +255,7 @@ export function makeAvatar(opts) {
       const blink = Math.sin(t * 0.8 + ph * 3) > 0.985 ? 0.12 : 1;
       eyeL.scale.y = eyeR.scale.y = blink;
 
-      const h = p.y || 0;
+      const h = Math.max(0, (p.y || 0) - (p.fy || 0));
       shadow.position.y = 0.014 - h;             // 월드 기준으로는 늘 바닥
       const sh = Math.max(0.35, 1 - h * 0.55);
       shadow.scale.set(sh, sh, 1);
