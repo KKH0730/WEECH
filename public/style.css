@@ -713,6 +713,10 @@ body.cinema #playerbar:hover{opacity:1;}
   background:var(--danger);transform:rotate(-38deg);border-radius:1px;
 }
 .person .pblk.off:hover{background:rgba(255,122,107,.18);color:#ffb3a8;}
+/* 말하는 중 — 귀 부분이 하얗게 차고 은은히 빛난다 */
+.person .pblk.talk{opacity:1;color:#fff;}
+.person .pblk.talk svg rect{fill:#fff;}
+.person .pblk.talk svg{filter:drop-shadow(0 0 5px rgba(255,255,255,.8));}
 
 /* 내 줄에만 붙는 ✎ — 지어 받은 이름을 여기서 고친다 */
 .person .pedit{

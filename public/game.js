@@ -972,6 +972,28 @@ const HEADSET =
   '<rect x="17.4" y="14.2" width="4.4" height="6.4" rx="1.7"/>' +
   '</svg>';
 
+/* 말하는 사람의 헤드셋을 칠한다.
+ *  명단 전체를 다시 그리지 않고 클래스만 바꾼다 — 10Hz 로 다시 그리면
+ *  마우스 밑 버튼이 깜빡이고 입력칸도 날아간다. */
+let talkTick = 0;
+
+function paintTalking(dt) {
+  if (!karaoke || !peopleOpen) return;
+  talkTick += dt;
+  if (talkTick < 0.1) return;
+  talkTick = 0;
+  Voice.tickMeters();
+  const box = $('peopleList');
+  if (!box) return;
+  const btns = box.querySelectorAll('button.pblk');
+  for (let i = 0; i < btns.length; i++) {
+    const b = btns[i];
+    const id = +b.dataset.blk;
+    // 막아 둔 사람은 칠하지 않는다 — 빨간 빗금이 먼저다
+    b.classList.toggle('talk', Voice.speaking(id) && !Voice.isBlocked(id));
+  }
+}
+
 /* 이 사람 소리만 내 쪽에서 막는다 — 서버를 거치지 않으므로 상대는 모른다 */
 function toggleBlock(id) {
   if (id === myId) return;
@@ -2625,6 +2647,7 @@ function frame(now) {
     if (screen === 'room') {
       stepNeon(dt);                           // 네온 간판의 긴 제목 흘리기
       stepPitch(dt, now / 1000);              // 스크린 아래 음정 띠
+      paintTalking(dt);                       // 말하는 사람의 헤드셋
     }
 
     // 전광판은 재생 중일 때만 다시 그린다 (막대 애니메이션 때문)

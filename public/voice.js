@@ -30,8 +30,62 @@ let enabled = false;         // 노래방 모드가 켜져 있나
 let micWanted = false;       // 내가 마이크를 켜려 하나
 let micStream = null;
 
-const peers = new Map();     // id -> { pc, sender, audio, pending:[] }
+const peers = new Map();     // id -> { pc, sender, audio, meter }
 const blocked = new Set();   // 내가 소리를 막은 사람
+
+/* ---- 말하는 중인가 --------------------------------------------------
+ *  들어오는 소리의 세기(RMS)만 본다. 음정까지 볼 필요가 없다.
+ *  말소리는 끊겼다 이어지므로, 조용해져도 잠깐(TALK_HOLD) 켜 둔 채로 두어야
+ *  표시가 깜빡이지 않는다.
+ * ------------------------------------------------------------------ */
+const TALK_GATE = 0.016;     // 이보다 커야 '말한다' 로 본다
+const TALK_HOLD = 280;       // 조용해져도 이만큼(ms) 더 켜 둔다
+let meterCtx = null;
+
+function audioCtx() {
+  try {
+    if (!meterCtx) meterCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (meterCtx.state === 'suspended') meterCtx.resume().catch(() => {});
+    return meterCtx;
+  } catch (e) { return null; }
+}
+
+function makeMeter(stream) {
+  const ctx = audioCtx();
+  if (!ctx) return null;
+  try {
+    const src = ctx.createMediaStreamSource(stream);
+    const an = ctx.createAnalyser();
+    an.fftSize = 512;
+    an.smoothingTimeConstant = 0.2;
+    src.connect(an);          // 출력에는 잇지 않는다 — 소리는 <audio> 가 낸다
+    return { src: src, an: an, buf: new Float32Array(an.fftSize), last: 0, on: false };
+  } catch (e) { return null; }
+}
+
+function readMeter(m, now) {
+  if (!m) return false;
+  m.an.getFloatTimeDomainData(m.buf);
+  let e = 0;
+  for (let i = 0; i < m.buf.length; i++) e += m.buf[i] * m.buf[i];
+  const rms = Math.sqrt(e / m.buf.length);
+  if (rms > TALK_GATE) m.last = now;
+  m.on = !!(m.last && now - m.last < TALK_HOLD);
+  return m.on;
+}
+
+/* 한 번에 모두 갱신한다 — 줄마다 따로 재면 같은 일을 여러 번 하게 된다 */
+export function tickMeters() {
+  if (!enabled) return;
+  const now = Date.now();
+  for (const p of peers.values()) readMeter(p.meter, now);
+}
+
+/* 이 사람이 지금 말하고 있나 (tickMeters 가 재 둔 값을 읽는다) */
+export function speaking(id) {
+  const p = peers.get(id | 0);
+  return !!(p && p.meter && p.meter.on);
+}
 
 /* 마이크를 쓸 수 있는 자리인가.
  * getUserMedia 는 보안 컨텍스트(https 또는 localhost)에서만 열린다.
@@ -104,6 +158,7 @@ function attachAudio(id, stream) {
   }
   p.audio.srcObject = stream;
   p.audio.muted = blocked.has(id);
+  if (!p.meter) p.meter = makeMeter(stream);     // 말하는지 재는 귀
   const played = p.audio.play();
   if (played && played.catch) {
     played.catch(() => {
@@ -130,6 +185,7 @@ function dropPeer(id) {
   const p = peers.get(id);
   if (!p) return;
   peers.delete(id);
+  if (p.meter) { try { p.meter.src.disconnect(); } catch (e) { /* 무시 */ } p.meter = null; }
   try { p.pc.close(); } catch (e) { /* 무시 */ }
   if (p.audio) {
     p.audio.srcObject = null;
@@ -195,6 +251,7 @@ export function setEnabled(on, ids) {
     for (const id of Array.from(peers.keys())) dropPeer(id);
     stopMic();
     micWanted = false;
+    if (meterCtx) { try { meterCtx.close(); } catch (e) { /* 무시 */ } meterCtx = null; }
   }
 }
 
