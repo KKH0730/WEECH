@@ -11,6 +11,7 @@ import { buildScene } from './scene3d.js';
 import { makeAvatar, colorOf } from './avatar3d.js';
 import * as TV from './youtube.js';
 import * as Voice from './voice.js';
+import * as Pitch from './pitch.js';
 
 const R = ROOM3D;
 const $ = (id) => document.getElementById(id);
@@ -83,8 +84,13 @@ const me = {
 const others = new Map();
 let myAvatar = null;
 let room = null, isHost = false;
-let karaoke = false;                               // 노래방 모드가 켜져 있나
+let mode = 'cinema';                               // Play 모드 — 'cinema' | 'karaoke'
+let karaoke = false;                               // mode === 'karaoke' 를 줄여 쓴 것
 let micOn = false;                                 // 내 마이크를 켰나
+let pgame = false;                                 // 음정 게임모드 (노래방 안에서만)
+let melodyNotes = null;                            // 이 곡의 기준선 (없으면 null)
+let melodyFor = '';                                // 그 기준선이 어느 영상 것인지
+let melodyState = '';                              // '' | pending | ready | none | off
 let coHosts = [];                                  // 부방장 id 목록
 const canCtl = () => isHost || coHosts.includes(myId);   // 재생·설정을 조작할 수 있는가
 
@@ -390,7 +396,8 @@ function connect() {
         if (seated[myId] !== undefined && seated[myId] >= 0) sitAt(seated[myId]);
         enterRoom();
         Voice.setMyId(myId);
-        setKaraoke(!!(room && room.karaoke));      // 켜져 있는 방에 들어왔을 수도 있다
+        setMode((room && room.mode) || 'cinema');  // 이미 노래방인 방일 수도 있다
+        setPgame(!!(room && room.pgame));
         break;
       }
 
@@ -497,9 +504,35 @@ function connect() {
         break;
       }
 
-      case 'karaoke':
-        setKaraoke(m.on, m.by);
+      case 'mode':
+        setMode(m.v, m.by);
         break;
+
+      case 'pgame':
+        setPgame(m.on);
+        logMsg(m.on ? '🎯 <b>음정 게임모드</b>가 켜졌습니다 — MR 에서 기준선을 뽑습니다.'
+          : '음정 게임모드가 꺼졌습니다.', 'sys');
+        break;
+
+      case 'melody': {
+        const it = currentItem();
+        if (!it || m.v !== it.id) break;          // 지난 곡에 대한 답은 버린다
+        if (m.state === 'pending') { melodyState = 'pending'; melodyNotes = null; break; }
+        if (m.state === 'off') {
+          melodyState = 'off'; melodyNotes = null;
+          world.setLoadVisible(false);
+          toast('이 서버에서는 음정 분석을 쓸 수 없습니다 — ' + (m.msg || ''), 6000);
+          break;
+        }
+        melodyNotes = (m.notes && m.notes.length) ? m.notes : null;
+        melodyState = melodyNotes ? 'ready' : 'none';
+        fitPitchRange();
+        world.setLoadVisible(false);
+        logMsg(melodyNotes
+          ? '기준선 준비 완료 — <b>' + melodyNotes.length + '음</b>. 파란 선을 따라 불러 보세요.'
+          : '이 곡에서는 주선율을 찾지 못했습니다 — 내 음정만 보여 줍니다.', 'sys');
+        break;
+      }
 
       case 'mic':
         if (m.id === myId) { micOn = !!m.on; updateMicBtn(); }
@@ -545,12 +578,15 @@ function connect() {
         spawnDart(m);
         break;
 
-      case 'play':
+      case 'play': {
         if (!room) break;
+        const was = room.idx;
         room.idx = m.idx; room.playing = m.playing;
         room.position = m.position; room.serverNow = m.serverNow;
         applyPlayback();
+        if (was !== room.idx) { pitchReset(); requestMelody(); }
         break;
+      }
 
       case 'room':
         if (!room) break;
@@ -588,56 +624,131 @@ function updateMicBtn() {
   const locked = micLocked();
   b.classList.toggle('on', micOn && !locked);
   b.classList.toggle('locked', locked);
-  b.disabled = locked;
+  // disabled 로 막지 않는다 — 막아 두면 눌러도 아무 일이 없어
+  // '왜 안 되는지' 를 말해 줄 기회조차 없다
+  b.disabled = false;
   const lbl = b.querySelector('.kb-lbl');
   if (lbl) lbl.textContent = locked ? '방장이 껐습니다' : (micOn ? '마이크 끄기' : '마이크 켜기');
 }
 
-function setKaraoke(on, byName) {
-  on = !!on;
-  const was = karaoke;
+/* Play 모드 — 영화관(영사기) · 노래방(미러볼) 둘 중 하나.
+ * 영화관이 기본이고, 노래방에서만 목소리·음정 기능이 열린다. */
+function setMode(v, byName) {
+  v = (v === 'karaoke') ? 'karaoke' : 'cinema';
+  const was = mode;
+  mode = v;
+  const on = (v === 'karaoke');
   karaoke = on;
-  if (room) room.karaoke = on;
-  world.setKaraoke(on);                       // 미러볼이 내려오거나 올라간다
+  if (room) room.mode = v;
+  world.setMode(v);                           // 영사기와 미러볼이 자리를 주고받는다
   document.body.classList.toggle('karaoke', on);
   $('karaokeBar').hidden = !on;
-  $('miKaraoke').classList.toggle('on', on);    // ⚙ 메뉴의 스위치
-  if (on) {
-    Voice.setMyId(myId);
-    Voice.setEnabled(true, Array.from(others.keys()));
-  } else {
-    Voice.setEnabled(false);
-    micOn = false;
+  $('miCinema').classList.toggle('on', !on);
+  $('miKaraoke').classList.toggle('on', on);
+  world.setPitchVisible(on);                    // 스크린 아래 음정 띠
+  if (!on) { Pitch.stop(true); setPgame(false); }
+  // 노래방이 켜져야 '음정 게임모드' 항목이 나타난다 — 메뉴를 열어 둔 채
+  // 켜는 경우가 많으므로 여기서 바로 다시 그린다
+  applyHostUI();
+  pitchReset();
+  try {
+    if (on) {
+      Voice.setMyId(myId);
+      Voice.setEnabled(true, Array.from(others.keys()));
+    } else {
+      Voice.setEnabled(false);
+      micOn = false;
+    }
+  } catch (e) {
+    // 목소리가 안 열려도 미러볼과 UI 는 그대로 — 여기서 멈추면 안 된다
+    toast('목소리를 준비하지 못했습니다 — ' + ((e && e.message) || e), 5000);
   }
   updateMicBtn();
   peopleSig = '';
   renderPeople();
-  if (was === on || screen !== 'room') return;
+  if (was === v || screen !== 'room') return;
   if (on) {
-    logMsg('🪩 <b>노래방 모드</b>가 켜졌습니다' + (byName ? ' — ' + esc(byName) : '') +
-      '. 위쪽 <b>마이크 켜기</b> 로 노래하세요.', 'sys');
+    logMsg('🪩 <b>노래방 모드</b>' + (byName ? ' — ' + esc(byName) : '') +
+      '. 미러볼이 내려옵니다. 위쪽 <b>마이크 켜기</b> 로 노래하세요.', 'sys');
     if (!Voice.micAvailable()) logMsg(esc(Voice.micUnavailableReason()), 'sys');
   } else {
-    logMsg('노래방 모드가 꺼졌습니다.', 'sys');
+    logMsg('🎬 <b>영화관 모드</b>' + (byName ? ' — ' + esc(byName) : '') + '. 영사기가 내려옵니다.', 'sys');
   }
 }
 
-$('micBtn').addEventListener('click', () => {
-  if (!karaoke || micLocked()) return;
+/* 마이크 버튼 — 어떤 길로 실패하든 왜 그런지 말해 준다.
+ * 처음 켤 때는 브라우저 권한 창이 떠 몇 초 걸릴 수 있어 그동안 '여는 중' 을 보여 준다. */
+/* 작은 버튼만 과녁이면 놓치기 쉬워, 막대 아무 데나 눌러도 토글된다 */
+$('karaokeBar').addEventListener('click', toggleMic);
+
+function toggleMic() {
+  const b = $('micBtn');
+  if (b.classList.contains('busy')) return;              // 권한 창을 기다리는 중
+  if (!karaoke) { toast('노래방 모드에서만 마이크를 쓸 수 있습니다.', 3000); return; }
+  if (micLocked()) { toast('방장이 회원님의 마이크를 꺼 두었습니다.', 3000); return; }
   const want = !micOn;
-  if (want && !Voice.micAvailable()) { toast(Voice.micUnavailableReason(), 6500); return; }
+  if (want && !Voice.micAvailable()) { toast(Voice.micUnavailableReason(), 8000); return; }
+
+  if (want) { b.classList.add('busy'); b.querySelector('.kb-lbl').textContent = '여는 중…'; }
   Voice.setMic(want).then((ok) => {
-    micOn = want && ok;
+    b.classList.remove('busy');
+    if (want && !ok) { updateMicBtn(); return; }          // 이유는 voice.js 가 이미 띄웠다
+    micOn = want;
+    // 음정 분석기도 같은 스트림을 문다 (출력에는 잇지 않아 내 목소리가 되돌아오지 않는다)
+    if (micOn) { pitchReset(); Pitch.start(Voice.micMedia()); } else { Pitch.stop(true); pitchReset(); }
     updateMicBtn();
     send({ t: 'mic', on: micOn });
+    if (want) toast('마이크가 켜졌습니다. ' + Voice.diagnose(), 3200);
+  }).catch((e) => {
+    b.classList.remove('busy');
+    updateMicBtn();
+    toast('마이크 오류 — ' + ((e && e.message) || e), 6000);
   });
+}
+
+/* 음정 게임모드 — 노래방 안에서만, 방장만 */
+function setPgame(on) {
+  pgame = !!on;
+  if (room) room.pgame = pgame;
+  $('miPgame').classList.toggle('on', pgame);
+  if (!pgame) {
+    melodyNotes = null; melodyState = ''; melodyFor = '';
+    world.setLoadVisible(false);
+    fitPitchRange();
+  } else {
+    requestMelody();
+  }
+  applyHostUI();
+}
+
+/* 지금 곡의 기준선을 서버에 달라고 한다. 이미 받아 둔 곡이면 아무것도 안 한다. */
+function requestMelody() {
+  if (!karaoke || !pgame || screen !== 'room') return;
+  const it = currentItem();
+  if (!it) return;
+  if (melodyFor === it.id && (melodyState === 'ready' || melodyState === 'pending')) return;
+  melodyFor = it.id;
+  melodyNotes = null;
+  melodyState = 'pending';
+  fitPitchRange();
+  send({ t: 'melody', v: it.id });
+}
+
+/* 켜고 끄는 항목은 메뉴를 닫지 않는다 — 노래방을 켠 바로 그 자리에서
+ * 음정 게임모드가 나타나므로, 닫히면 다시 열어야 한다. */
+$('miPgame').addEventListener('click', () => {
+  if (!isHost) { toast('방장만 음정 게임모드를 켤 수 있습니다.', 2800); return; }
+  if (!karaoke) { toast('노래방 모드에서만 쓸 수 있습니다.', 3000); return; }
+  send({ t: 'pgame', on: !pgame });
 });
 
-$('miKaraoke').addEventListener('click', () => {
-  openSet(false);
-  if (!isHost) { toast('방장만 노래방 모드를 켤 수 있습니다.', 2600); return; }
-  send({ t: 'karaoke', on: !karaoke });
-});
+function pickMode(v) {
+  if (!isHost) { toast('방장만 Play 모드를 바꿀 수 있습니다.', 2800); return; }
+  if (mode === v) return;
+  send({ t: 'mode', v: v });
+}
+$('miCinema').addEventListener('click', () => pickMode('cinema'));
+$('miKaraoke').addEventListener('click', () => pickMode('karaoke'));
 
 function send(obj) {
   if (ws && ws.readyState === 1) { ws.send(JSON.stringify(obj)); return; }
@@ -721,7 +832,7 @@ function leaveToLobby() {
   setChatMin(true);               // 기본 상태(접힘)로 되돌린다
   cssHost.style.display = 'none';
   setWatchMode(false);
-  setKaraoke(false);                 // 목소리 연결을 모두 끊는다
+  setMode('cinema');                 // 목소리 연결을 모두 끊는다
   renderRooms();
 }
 
@@ -846,6 +957,13 @@ function renderPeopleHead() {
 }
 
 /* 헤드셋 — 소리 차단 버튼의 그림. 막아 두면 CSS 가 빗금을 긋는다 */
+/* 연필 — 방 제목 수정 버튼과 같은 그림·방향을 쓴다 */
+const PENCIL =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+  'stroke-linecap="round" stroke-linejoin="round">' +
+  '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>' +
+  '</svg>';
+
 const HEADSET =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
   'stroke-linecap="round" stroke-linejoin="round">' +
@@ -898,14 +1016,15 @@ function renderPeople() {
         (p.mmute ? '방장이 껐음' : (p.mic ? '마이크 켬' : '마이크 끔')) + '">🎤</span>'
       : '';
     // 소리 차단 — 헤드셋 버튼 하나로 켜고 끈다. 내 귀에만 적용되므로 누구나 누른다.
+    // 노래방 모드일 때만 보인다 — 평소에는 들을 소리 자체가 없다.
     const off = !mine && Voice.isBlocked(p.id);
-    const blk = mine ? ''
+    const blk = (mine || !karaoke) ? ''
       : '<button class="pblk' + (off ? ' off' : '') + '" data-blk="' + p.id + '" title="' +
         (off ? '소리 차단 중 — 누르면 다시 들립니다' : '이 사람 소리 차단 (나에게만 적용)') +
         '" aria-label="소리 차단">' + HEADSET + '</button>';
     // 내 줄에는 ✎ (이름 바꾸기), 남의 줄에는 방장만 쓰는 ⋯ (관리)
     const acts = mine
-      ? '<button class="pedit" title="이름 바꾸기" aria-label="이름 바꾸기">✎</button>'
+      ? '<button class="pedit" title="이름 바꾸기" aria-label="이름 바꾸기">' + PENCIL + '</button>'
       : (isHost ? '<button class="pmore" data-more="' + p.id + '" title="관리" aria-label="관리">⋯</button>' : '');
     // 이름과 배지(방장·나)는 한 덩어리로 왼쪽에, 마이크·헤드셋·⋯ 는 오른쪽 끝에
     return '<div class="person' + (p.gone ? ' isgone' : '') + '">' +
@@ -1058,9 +1177,13 @@ function applyHostUI() {
   $('hostCtl').hidden = !ctl;
   $('guestNote').hidden = ctl;
   $('playlistBtn').hidden = !ctl;
-  $('miKaraoke').hidden = !isHost;     // 노래방 모드는 방장만
+  $('modeHead').hidden = !isHost;      // Play 모드는 방장만 고른다
+  $('miCinema').hidden = !isHost;
+  $('miKaraoke').hidden = !isHost;
+  $('miPgame').hidden = !(isHost && karaoke);   // 음정 게임모드는 노래방 안에서만
   const sep = $('setDrop').querySelector('.smi-sep');
   if (sep) sep.hidden = !isHost;
+  $('miCinema').classList.toggle('on', !karaoke);
   $('miKaraoke').classList.toggle('on', karaoke);
   $('miTitle').hidden = !ctl;          // 설정 메뉴의 '방 제목 수정'
   $('titleEdit').hidden = !ctl;        // 제목 옆 연필
@@ -1254,6 +1377,280 @@ function stepNeon(dt) {
   drawNeon();
 }
 
+/* ---- 음정 띠 · 음정 게임모드 ----------------------------------------
+ *  스크린 아랫부분에 겹쳐 띄우는 2048×256 캔버스.
+ *    왼쪽 칸 : 지금 내고 있는 음 이름과 음정 오차
+ *    가운데 : 기준선(MR 에서 뽑은 주선율)과 내 음정이 함께 흐른다
+ *    아래 띠 : 목소리 파형
+ *
+ *  가로축은 '지금' 을 62% 지점에 두어 왼쪽은 지나간 소리, 오른쪽은 다가오는
+ *  음이 보이게 했다. 부를 음을 미리 봐야 맞출 수 있다.
+ *  세로축은 로그다 — 한 옥타브가 어디서나 같은 높이를 차지해야 자연스럽다.
+ * ------------------------------------------------------------------ */
+const PITCH_PAST = 3.6;              // 왼쪽에 남는 시간
+const PITCH_FUT = 2.4;               // 오른쪽에 미리 보이는 시간
+const PX0 = 168, PX1 = 2016;         // 그래프 좌우
+const PY0 = 16, PY1 = 190;           // 그래프 위아래
+const WY0 = 200, WY1 = 246;          // 파형 띠
+const PX_SEC = (PX1 - PX0) / (PITCH_PAST + PITCH_FUT);
+const NOW_X = PX0 + PITCH_PAST * PX_SEC;
+
+const pitchHist = [];                // { t, hz } — 최근 PITCH_PAST 초
+let pitchTick = 0;
+let pitchIdle = true;
+
+let pitchLo = 110, pitchHi = 880;    // 보이는 음역 (기준선이 들어오면 거기 맞춘다)
+
+const pitchY = (hz) =>
+  PY1 - (Math.log(hz / pitchLo) / Math.log(pitchHi / pitchLo)) * (PY1 - PY0);
+const xOfAge = (age) => NOW_X - age * PX_SEC;
+
+function pitchReset() {
+  pitchHist.length = 0;
+  pitchTick = 0;
+  pitchIdle = true;
+}
+
+/* 기준선이 들어오면 그 곡의 음역에 맞춰 세로축을 다시 잡는다 */
+function fitPitchRange() {
+  if (!melodyNotes || !melodyNotes.length) { pitchLo = 110; pitchHi = 880; return; }
+  let lo = 999, hi = 0;
+  for (const n of melodyNotes) { if (n.m < lo) lo = n.m; if (n.m > hi) hi = n.m; }
+  pitchLo = Pitch.hzOfMidi(Math.max(36, lo - 3));
+  pitchHi = Pitch.hzOfMidi(Math.min(96, hi + 3));
+}
+
+/* 격자와 음 이름 */
+function drawPitchGrid(g, W) {
+  g.clearRect(0, 0, W, 256);
+  g.fillStyle = 'rgba(10,8,16,.62)';
+  g.fillRect(0, 0, W, 256);
+  g.strokeStyle = 'rgba(255,90,176,.45)';
+  g.lineWidth = 3;
+  g.strokeRect(1.5, 1.5, W - 3, 253);
+
+  g.textBaseline = 'middle';
+  const loM = Math.ceil(69 + 12 * Math.log2(pitchLo / 440));
+  const hiM = Math.floor(69 + 12 * Math.log2(pitchHi / 440));
+  for (let m = loM; m <= hiM; m++) {
+    const y = pitchY(Pitch.hzOfMidi(m));
+    const n = Pitch.noteOf(Pitch.hzOfMidi(m));
+    const mark = (n.name === 'C' || n.name === 'A');
+    g.strokeStyle = mark ? 'rgba(255,255,255,.22)' : 'rgba(255,255,255,.07)';
+    g.lineWidth = mark ? 2 : 1;
+    g.beginPath(); g.moveTo(PX0, y); g.lineTo(PX1, y); g.stroke();
+    if (mark && hiM - loM < 40) {
+      g.fillStyle = 'rgba(255,255,255,.55)';
+      g.font = '600 22px "Noto Sans KR",sans-serif';
+      g.textAlign = 'right';
+      g.fillText(n.name + n.octave, PX0 - 12, y);
+    }
+  }
+  g.strokeStyle = 'rgba(255,255,255,.14)';
+  g.lineWidth = 2;
+  g.beginPath(); g.moveTo(152, 18); g.lineTo(152, 238); g.stroke();
+}
+
+/* '지금' 세로선 */
+function drawNowLine(g) {
+  g.strokeStyle = 'rgba(255,255,255,.5)';
+  g.lineWidth = 2;
+  g.setLineDash([7, 6]);
+  g.beginPath(); g.moveTo(NOW_X, PY0 - 4); g.lineTo(NOW_X, PY1 + 6); g.stroke();
+  g.setLineDash([]);
+}
+
+/* 기준선 — MR 에서 뽑은 주선율. 다가오는 음은 옅게, 지금 음은 또렷하게. */
+function drawReference(g, songNow) {
+  if (!melodyNotes || !melodyNotes.length) return;
+  const from = songNow - PITCH_PAST - 0.5, to = songNow + PITCH_FUT + 0.5;
+  for (const n of melodyNotes) {
+    const end = n.t + n.d;
+    if (end < from || n.t > to) continue;
+    const x0 = xOfAge(songNow - n.t), x1 = xOfAge(songNow - end);
+    const y = pitchY(Math.max(pitchLo, Math.min(pitchHi, Pitch.hzOfMidi(n.m))));
+    const live = n.t <= songNow && songNow < end;
+    g.fillStyle = live ? 'rgba(125,230,255,.95)' : 'rgba(110,200,255,.34)';
+    if (live) { g.shadowColor = 'rgba(125,230,255,.9)'; g.shadowBlur = 18; }
+    const w = Math.max(5, x1 - x0);
+    g.beginPath();
+    if (g.roundRect) g.roundRect(x0, y - 7, w, 14, 7); else g.rect(x0, y - 7, w, 14);
+    g.fill();
+    g.shadowBlur = 0;
+  }
+}
+
+function drawPitch(nowSec, songNow) {
+  const c = world.pitchCanvas;
+  if (!c) return;
+  const g = c.getContext('2d');
+  const W = c.width;
+  drawPitchGrid(g, W);
+  if (pgame && melodyNotes) drawReference(g, songNow);
+  drawNowLine(g);
+
+  if (!Pitch.isOn()) {
+    // 기준선이 떠 있으면 아무 글자도 얹지 않는다 — 선 위를 글씨가 가린다
+    if (!(pgame && melodyNotes)) {
+      g.fillStyle = 'rgba(255,255,255,.4)';
+      g.font = '500 30px "Noto Sans KR",sans-serif';
+      g.textAlign = 'center';
+      g.fillText('마이크를 켜면 음정이 그려집니다', W / 2, 128);
+    }
+    world.pitchTexture.needsUpdate = true;
+    return;
+  }
+
+  /* 내 음 높낮이 — 소리가 끊긴 자리에서는 선도 끊는다 */
+  g.lineCap = 'round';
+  g.lineJoin = 'round';
+  for (let pass = 0; pass < 2; pass++) {
+    g.strokeStyle = pass === 0 ? 'rgba(255,88,176,.9)' : '#fff2fa';
+    g.lineWidth = pass === 0 ? 13 : 4;
+    g.shadowColor = 'rgba(255,88,176,.95)';
+    g.shadowBlur = pass === 0 ? 22 : 6;
+    let drawing = false;
+    g.beginPath();
+    for (let i = 0; i < pitchHist.length; i++) {
+      const p = pitchHist[i];
+      if (!p.hz) { drawing = false; continue; }
+      const prev = pitchHist[i - 1];
+      const gap = !prev || !prev.hz || (p.t - prev.t) > 0.25;
+      const x = xOfAge(nowSec - p.t);
+      const y = pitchY(Math.max(pitchLo, Math.min(pitchHi, p.hz)));
+      if (gap || !drawing) { g.moveTo(x, y); drawing = true; } else g.lineTo(x, y);
+    }
+    g.stroke();
+  }
+  g.shadowBlur = 0;
+
+  /* 지금 이 순간 */
+  const cur = pitchHist.length ? pitchHist[pitchHist.length - 1] : null;
+  if (cur && cur.hz) {
+    const y = pitchY(Math.max(pitchLo, Math.min(pitchHi, cur.hz)));
+    g.fillStyle = '#fff2fa';
+    g.shadowColor = 'rgba(255,88,176,1)';
+    g.shadowBlur = 26;
+    g.beginPath(); g.arc(NOW_X, y, 11, 0, 6.2832); g.fill();
+    g.shadowBlur = 0;
+
+    const n = Pitch.noteOf(cur.hz);
+    g.textAlign = 'center';
+    g.fillStyle = '#fff2fa';
+    g.font = '700 78px "Noto Sans KR",sans-serif';
+    g.textBaseline = 'alphabetic';
+    g.fillText(n.name, 66, 108);
+    g.font = '500 34px "Noto Sans KR",sans-serif';
+    g.fillStyle = 'rgba(255,255,255,.6)';
+    g.fillText(String(n.octave), 122, 108);
+
+    const bx = 24, bw = 104, by = 150;
+    g.fillStyle = 'rgba(255,255,255,.14)';
+    g.fillRect(bx, by, bw, 8);
+    g.fillStyle = 'rgba(255,255,255,.45)';
+    g.fillRect(bx + bw / 2 - 1, by - 5, 2, 18);
+    const off = Math.max(-50, Math.min(50, n.cents)) / 50;
+    const near = Math.abs(n.cents) <= 12;
+    g.fillStyle = near ? '#7dffb0' : '#ff9ad2';
+    g.beginPath(); g.arc(bx + bw / 2 + off * (bw / 2), by + 4, 8, 0, 6.2832); g.fill();
+    g.font = '500 20px "Noto Sans KR",sans-serif';
+    g.fillStyle = near ? 'rgba(125,255,176,.9)' : 'rgba(255,154,210,.9)';
+    g.fillText((n.cents > 0 ? '+' : '') + n.cents, bx + bw / 2, by + 44);
+  }
+
+  /* 파형 */
+  const wf = Pitch.waveform();
+  if (wf) {
+    g.strokeStyle = 'rgba(140,220,255,.75)';
+    g.lineWidth = 2;
+    g.beginPath();
+    const mid = (WY0 + WY1) / 2, amp = (WY1 - WY0) / 2;
+    const step = Math.max(1, Math.floor(wf.length / (PX1 - PX0)));
+    let first = true;
+    for (let i = 0, x = PX0; i < wf.length && x <= PX1; i += step, x++) {
+      const y = mid - Math.max(-1, Math.min(1, wf[i] * 3.2)) * amp;
+      if (first) { g.moveTo(x, y); first = false; } else g.lineTo(x, y);
+    }
+    g.stroke();
+  }
+
+  world.pitchTexture.needsUpdate = true;
+}
+
+/* ---- 분석 중 스크린을 덮는 로딩 화면 ---- */
+let loadSpin = 0;
+
+function drawLoading(t) {
+  const c = world.loadCanvas;
+  if (!c) return;
+  const g = c.getContext('2d');
+  const W = c.width, H = c.height;
+  g.clearRect(0, 0, W, H);
+  g.fillStyle = 'rgba(8,6,14,.9)';
+  g.fillRect(0, 0, W, H);
+
+  const cx = W / 2, cy = H / 2 - 36;
+  // 도는 고리
+  g.lineCap = 'round';
+  g.strokeStyle = 'rgba(255,255,255,.1)';
+  g.lineWidth = 9;
+  g.beginPath(); g.arc(cx, cy, 52, 0, 6.2832); g.stroke();
+  g.strokeStyle = '#ff5ab0';
+  g.shadowColor = 'rgba(255,90,176,.9)';
+  g.shadowBlur = 22;
+  g.beginPath(); g.arc(cx, cy, 52, t * 2.6, t * 2.6 + 1.9); g.stroke();
+  g.shadowBlur = 0;
+
+  g.textAlign = 'center';
+  g.fillStyle = '#fff2fa';
+  g.font = '700 42px "Noto Sans KR",sans-serif';
+  g.fillText('음정 분석 중…', cx, cy + 128);
+
+  const it = currentItem();
+  if (it) {
+    g.font = '500 25px "Noto Sans KR",sans-serif';
+    g.fillStyle = 'rgba(255,255,255,.6)';
+    let title = it.title || it.id;
+    while (title.length > 1 && g.measureText(title).width > W - 160) title = title.slice(0, -1);
+    g.fillText(title, cx, cy + 172);
+  }
+  g.font = '400 21px "Noto Sans KR",sans-serif';
+  g.fillStyle = 'rgba(255,255,255,.38)';
+  g.fillText('MR 에서 주선율을 뽑고 있습니다 · 한 번 해 두면 다음부터는 바로 시작합니다', cx, cy + 214);
+
+  world.loadTexture.needsUpdate = true;
+}
+
+/* 프레임마다 한 점씩 쌓고 다시 그린다 (25Hz) */
+function stepPitch(dt, nowSec) {
+  if (!karaoke) { if (world.setLoadVisible) world.setLoadVisible(false); return; }
+
+  // 음정 게임모드인데 아직 기준선이 없으면 스크린을 덮고 기다린다
+  const waiting = pgame && melodyState === 'pending';
+  world.setLoadVisible(waiting);
+  if (waiting) {
+    loadSpin += dt;
+    if (loadSpin > 0.05) { loadSpin = 0; }
+    drawLoading(nowSec);
+  }
+
+  const songNow = TV.currentTime();
+  if (!Pitch.isOn()) {
+    if (!pitchIdle) { pitchIdle = true; drawPitch(nowSec, songNow); }
+    else if (pgame && melodyNotes && room && room.playing) drawPitch(nowSec, songNow);
+    return;
+  }
+  pitchIdle = false;
+  pitchTick += dt;
+  if (pitchTick < 0.04) return;
+  pitchTick = 0;
+  const r = Pitch.read();
+  pitchHist.push({ t: nowSec, hz: r.hz });
+  while (pitchHist.length && nowSec - pitchHist[0].t > PITCH_PAST + 0.5) pitchHist.shift();
+  drawPitch(nowSec, songNow);
+}
+
+
 $('playBtn').addEventListener('click', () => {
   if (!canCtl() || !room) return;
   send({ t: 'ctrl', op: room.playing ? 'pause' : 'play', v: TV.currentTime() });
@@ -1408,6 +1805,16 @@ TV.init({
   onBlocked: (why) => {
     if (why === 'mute') $('unmuteBtn').hidden = false;
     else toast(why, 5000);
+  },
+  /* 넘어가기 전에 '왜' 를 남긴다. 조용히 다음 곡으로 가 버리면
+   * 틀리지도 않은 링크를 붙들고 한참 헤매게 된다. */
+  onVideoError: (code, id) => {
+    const it = (room && room.playlist || []).find((x) => x.id === id);
+    const name = it ? (it.title || it.id) : (id || '이 영상');
+    const why = TV.errorText(code);
+    logMsg('⚠ <b>' + esc(name) + '</b> — ' + esc(why) +
+      (canCtl() ? ' 재생목록에서 빼 주세요.' : ''), 'sys');
+    toast(why, 6500);
   }
 });
 $('unmuteBtn').addEventListener('click', () => { TV.unmute(); $('unmuteBtn').hidden = true; });
@@ -1694,6 +2101,7 @@ window.addEventListener('keydown', (e) => {
   const k = e.key.toLowerCase();
   if (k === 'f') { shootForward(); e.preventDefault(); return; }
   if (k === 'v') { setWatchMode(cam.mode !== 'watch'); return; }
+  if (k === 'm' && karaoke) { toggleMic(); return; }      // 노래방 — 마이크 토글
   keys[k] = true;
   if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].indexOf(k) >= 0) e.preventDefault();
 });
@@ -1905,6 +2313,8 @@ let barMin = (() => {
 function setBarMin(min) {
   barMin = min;
   $('playerbar').classList.toggle('min', min);
+  // 접으면 노래방 막대·토스트가 빈자리만큼 올라온다
+  document.body.classList.toggle('barmin', min);
   $('barToggle').setAttribute('aria-expanded', min ? 'false' : 'true');
   try { sessionStorage.setItem('weech.bar', min ? '1' : '0'); } catch (e) { /* 무시 */ }
 }
@@ -2212,7 +2622,10 @@ function frame(now) {
   try {
     update(dt, now);
     world.update(now / 1000, !!(room && room.playing));
-    if (screen === 'room') stepNeon(dt);      // 네온 간판의 긴 제목 흘리기
+    if (screen === 'room') {
+      stepNeon(dt);                           // 네온 간판의 긴 제목 흘리기
+      stepPitch(dt, now / 1000);              // 스크린 아래 음정 띠
+    }
 
     // 전광판은 재생 중일 때만 다시 그린다 (막대 애니메이션 때문)
     // 멈춰 있으면 내용이 바뀔 때만 그리므로 텍스처를 매번 올리지 않는다

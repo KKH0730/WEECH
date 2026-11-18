@@ -170,6 +170,45 @@ export function buildScene() {
   scene.add(hole);
   api.tvHole = hole;
 
+  /* 음정 띠 — 노래방에서 스크린 아랫부분에 겹쳐 띄운다.
+   *  구멍(hole)은 renderOrder 1 로 알파를 0 으로 덮어쓴다. 이 띠는 그보다
+   *  4cm 앞에 두고 renderOrder 를 더 뒤로 줘, 구멍이 뚫린 자리를 다시 칠한다.
+   *  캔버스 2048×256 = 8:1 이라 가로 12m 에 맞추면 높이가 정확히 1.5m 가 된다. */
+  const pitchRes = canvasTex(THREE, 2048, 256, (g, w, h) => { g.clearRect(0, 0, w, h); });
+  const PB_H = T.w * 256 / 2048;
+  const pitchMesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(T.w, PB_H),
+    new THREE.MeshBasicMaterial({ map: pitchRes.tex, transparent: true, depthWrite: false })
+  );
+  pitchMesh.position.set(
+    tvAt.x + tvAt.nx * 0.06,
+    T.y - T.h / 2 + PB_H / 2 + 0.15,        // 스크린 아랫변에서 조금 띄운다
+    tvAt.z + tvAt.nz * 0.06
+  );
+  pitchMesh.rotation.y = tvAt.ry;
+  pitchMesh.renderOrder = 4;
+  pitchMesh.visible = false;
+  scene.add(pitchMesh);
+  api.pitchCanvas = pitchRes.canvas;
+  api.pitchTexture = pitchRes.tex;
+  api.setPitchVisible = function (v) { pitchMesh.visible = !!v; };
+
+  /* 음정 게임모드 로딩 — 분석이 끝날 때까지 스크린 전체를 덮는다.
+   *  구멍보다 앞(5cm)에 두고 renderOrder 를 뒤로 줘, 뚫린 자리를 다시 칠한다. */
+  const loadRes = canvasTex(THREE, 1024, 576, (g, w, h) => { g.clearRect(0, 0, w, h); });
+  const loadMesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(T.w, T.h),
+    new THREE.MeshBasicMaterial({ map: loadRes.tex, transparent: true, depthWrite: false })
+  );
+  loadMesh.position.set(tvAt.x + tvAt.nx * 0.05, T.y, tvAt.z + tvAt.nz * 0.05);
+  loadMesh.rotation.y = tvAt.ry;
+  loadMesh.renderOrder = 3;
+  loadMesh.visible = false;
+  scene.add(loadMesh);
+  api.loadCanvas = loadRes.canvas;
+  api.loadTexture = loadRes.tex;
+  api.setLoadVisible = function (v) { loadMesh.visible = !!v; };
+
   // 화면이 뿜는 빛
   const tvLight = new THREE.PointLight(0x88aaff, R.LIGHT.tv, 14, 2);
   tvLight.position.set(tvAt.x + tvAt.nx * 1.2, tvAt.y, tvAt.z + tvAt.nz * 1.2);
@@ -391,6 +430,7 @@ export function buildScene() {
 
   R.CEIL_LIGHTS.forEach((p) => {
     const l = new THREE.PointLight(0xffe9d0, R.LIGHT.ceil, 30, 2);
+    l.userData.base = R.LIGHT.ceil;        // 재생 중에 낮출 때 돌아올 자리
     l.position.set(p.x, C.y + 0.18, p.z);
     scene.add(l);
     api.lampLights.push(l);
@@ -413,6 +453,7 @@ export function buildScene() {
 
   R.FLOOR_LIGHTS.forEach((p) => {
     const l = new THREE.PointLight(0xff9e52, R.LIGHT.floor, 10, 2);
+    l.userData.base = R.LIGHT.floor;
     l.position.set(p.x, S.y + 0.1, p.z);
     scene.add(l);
     api.lampLights.push(l);
@@ -455,9 +496,15 @@ export function buildScene() {
   // 천장에 매단 봉
   const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, R.H - PJ.y - PJ.h / 2, 10), metal);
   rod.position.set(PJ.x, (R.H + PJ.y + PJ.h / 2) / 2, PJ.z);
-  scene.add(rod);
-  scene.add(box(0.26, 0.04, 0.26, metal, PJ.x, R.H - 0.02, PJ.z));
-  scene.add(projGrp);
+
+  /* 영사기 한 벌(본체·봉·천장판·빔)을 한 묶음으로 묶는다.
+   * 모드가 바뀌면 이 묶음째 천장으로 걷혀 올라갔다 다시 내려온다. */
+  const cineGrp = new THREE.Group();
+  cineGrp.add(rod);
+  cineGrp.add(box(0.26, 0.04, 0.26, metal, PJ.x, R.H - 0.02, PJ.z));
+  cineGrp.add(projGrp);
+  scene.add(cineGrp);
+  api.cineGroup = cineGrp;
   projGrp.traverse((o) => { if (o.isMesh) collidables.push(o); });
 
   /* 빔 — 렌즈에서 화면까지 퍼지는 빛기둥 */
@@ -491,10 +538,13 @@ export function buildScene() {
     scene.add(m);
     return m;
   })();
+  cineGrp.add(beam);          // 빔도 함께 걷힌다
   api.beam = beam;
 
   /* ---------------- 조명 ---------------- */
-  scene.add(new THREE.AmbientLight(0x322e42, R.LIGHT.ambient));
+  const ambient = new THREE.AmbientLight(0x322e42, R.LIGHT.ambient);
+  scene.add(ambient);
+  api.ambient = ambient;
   const hemi = new THREE.HemisphereLight(0x5e5e82, 0x3a2d26, R.LIGHT.hemi);
   scene.add(hemi);
 
@@ -636,27 +686,71 @@ export function buildScene() {
   api.mirrorLights = [mLightA, mLightB];
   api.mirrorDots = dotGrp;
 
-  let karaoke = false;
+  /* Play 모드 — 'cinema' 면 영사기, 'karaoke' 면 미러볼.
+   * 어느 쪽이든 재생 중에는 방 조명을 낮춰 화면·미러볼이 도드라지게 한다. */
+  let mode = 'cinema';
   let mirrorT = 0;             // 0 = 천장에 숨음, 1 = 다 내려옴
-  api.setKaraoke = function (on) { karaoke = !!on; };
-  api.karaokeOn = function () { return karaoke; };
+  let dimT = 1;                // 1 = 환하게, LIGHT.dim = 어둑하게
+  api.setMode = function (m) { mode = (m === 'karaoke') ? 'karaoke' : 'cinema'; };
+  api.getMode = function () { return mode; };
+  // 예전 이름 — 쓰는 곳이 남아 있어도 깨지지 않게
+  api.setKaraoke = function (on) { api.setMode(on ? 'karaoke' : 'cinema'); };
+
+  let cineT = 1;               // 0 = 천장에 걷힘, 1 = 다 내려옴 (영화관이 기본이라 1)
+  let spinT = 0;               // 돌아간 각도를 쌓아 둔다 (멈추면 그대로 선다)
+  let runT = 0;                // 0 = 멎음, 1 = 돌아감
+  let lastT = 0;
 
   api.update = function (t, tvOn) {
+    const dt0 = lastT ? Math.min(0.05, Math.max(0, t - lastT)) : 0;
+    lastT = t;
     // TV 가 켜져 있으면 화면빛이 미세하게 일렁인다
     const target = tvOn
       ? R.LIGHT.tv + Math.sin(t * 2.3) * 1.2 + Math.sin(t * 7.1) * 0.5
       : 0.5;
     api.tvLight.intensity += (target - api.tvLight.intensity) * 0.08;
 
-    // 영사기 빔은 재생 중에만, 밝기도 함께 일렁인다
+    /* ---- 영사기 등장·퇴장 ----
+     *  영화관 모드면 천장에서 내려오고, 노래방 모드면 천장으로 걷힌다.
+     *  미러볼과 똑같은 방식(한 값으로 높이·크기를 함께 끈다)이라 둘이 자연스럽게
+     *  자리를 주고받는다. 다 올라가면 아예 그리지 않는다. */
+    {
+      const want = (mode === 'cinema') ? 1 : 0;
+      cineT += (want - cineT) * 0.055;
+      if (cineT < 0.004 && want === 0) {
+        cineT = 0;
+        if (cineGrp.visible) cineGrp.visible = false;
+      } else {
+        cineGrp.visible = true;
+        const e = cineT * cineT * (3 - 2 * cineT);
+        cineGrp.position.y = (1 - e) * 1.4;        // 천장 속으로 들어간다
+        cineGrp.scale.setScalar(0.25 + e * 0.75);
+      }
+    }
+
+    /* 영사기 빛 — 영화관 모드에서, 재생 중에만 켜진다 */
+    const cineOn = (mode === 'cinema') && tvOn && cineT > 0.5;
     if (api.beam) {
-      api.beam.visible = tvOn;
-      if (tvOn) {
+      api.beam.visible = cineOn;
+      if (cineOn) {
         api.beam.material.opacity = 0.062 + Math.sin(t * 2.3) * 0.012 + Math.sin(t * 9.7) * 0.006;
       }
     }
     if (api.projectorLens) {
-      api.projectorLens.material.color.setScalar(tvOn ? 0.75 + Math.sin(t * 7.1) * 0.12 : 0.1);
+      api.projectorLens.material.color.setScalar(cineOn ? 0.75 + Math.sin(t * 7.1) * 0.12 : 0.1);
+    }
+
+    /* 방 조명 — 재생 중에는 어둑하게, 멈추면 다시 환하게.
+     * 한 값(dimT)으로 환경광·반구광·건축 조명을 한꺼번에 끌고 간다. */
+    {
+      const want = tvOn ? R.LIGHT.dim : 1;
+      dimT += (want - dimT) * 0.035;                 // 눈이 적응할 만큼 천천히
+      ambient.intensity = R.LIGHT.ambient * dimT;
+      hemi.intensity = R.LIGHT.hemi * dimT;
+      for (let i = 0; i < api.lampLights.length; i++) {
+        const l = api.lampLights[i];
+        l.intensity = l.userData.base * dimT;
+      }
     }
 
     // 네온 간판 — 진짜 네온관처럼 미세하게 흔들린다
@@ -670,9 +764,10 @@ export function buildScene() {
      *  mirrorT 를 0↔1 로 부드럽게 옮기고, 그 값 하나로 내려온 높이·크기·밝기를
      *  모두 끌고 간다. 다 숨으면 아예 그리지 않는다. */
     {
-      const want = karaoke ? 1 : 0;
+      const kara = (mode === 'karaoke');
+      const want = kara ? 1 : 0;
       mirrorT += (want - mirrorT) * 0.055;
-      if (mirrorT < 0.003 && !karaoke) {
+      if (mirrorT < 0.003 && !kara) {
         mirrorT = 0;
         if (mirrorGrp.visible) { mirrorGrp.visible = false; dotGrp.visible = false; }
       } else {
@@ -680,25 +775,30 @@ export function buildScene() {
         const e = mirrorT * mirrorT * (3 - 2 * mirrorT);        // 부드럽게 (smoothstep)
         mirrorGrp.position.y = M.y + (1 - e) * M.drop;          // 천장에서 내려온다
         ballGrp.scale.setScalar(0.08 + e * 0.92);
-        ballGrp.rotation.y = t * 0.55;
-        ballGrp.rotation.z = Math.sin(t * 0.21) * 0.1;
+        /* 재생 중에만 돌고 빛난다. 멈추면 돌던 자리에 서서 빛이 잦아든다 —
+         * 공은 매달린 채 남아 '지금 노래방이다' 를 계속 알려 준다. */
+        spinT += (tvOn ? 1 : 0) * dt0 * 0.55;                   // 멈추면 각도가 유지된다
+        runT += ((tvOn ? 1 : 0) - runT) * 0.06;                 // 빛의 세기
+        const act = e * runT;
+        ballGrp.rotation.y = spinT;
+        ballGrp.rotation.z = Math.sin(spinT * 0.38) * 0.1;
         cord.scale.y = Math.max(0.001, 1 - (1 - e) * (M.drop / cordLen));
         cord.position.y = (cordLen * cord.scale.y) / 2;
 
         // 반짝임 — 면이 돌며 빛을 튕기는 느낌
         const tw = 0.82 + Math.sin(t * 5.3) * 0.12 + Math.sin(t * 11.9) * 0.06;
-        ball.material.emissiveIntensity = 1.5 * tw * e;
-        halo.material.opacity = 0.5 * e * tw;
+        ball.material.emissiveIntensity = 1.5 * tw * (0.18 * e + 0.82 * act);
+        halo.material.opacity = 0.5 * act * tw;
         halo.scale.setScalar(M.r * (6.4 + Math.sin(t * 2.6) * 0.8));
 
         // 빔 두 벌 — 서로 반대로 돌며 밝기도 엇갈리게 뛴다
-        beamSets[0].rotation.y = t * 0.42;
-        beamSets[1].rotation.y = -t * 0.66;
+        beamSets[0].rotation.y = spinT * 0.76;
+        beamSets[1].rotation.y = -spinT * 1.2;
         beamSets[1].rotation.x = 0.26;
-        beamMats[0].opacity = 0.14 * e * (0.72 + Math.sin(t * 3.1) * 0.28);
-        beamMats[1].opacity = 0.11 * e * (0.72 + Math.sin(t * 2.3 + 1.6) * 0.28);
+        beamMats[0].opacity = 0.14 * act * (0.72 + Math.sin(t * 3.1) * 0.28);
+        beamMats[1].opacity = 0.11 * act * (0.72 + Math.sin(t * 2.3 + 1.6) * 0.28);
 
-        const amp = R.LIGHT.mirror * e;
+        const amp = R.LIGHT.mirror * act;
         mLightA.intensity = amp * (0.75 + Math.sin(t * 2.7) * 0.25);
         mLightB.intensity = amp * (0.75 + Math.sin(t * 2.7 + 2.1) * 0.25);
         mLightA.position.set(Math.cos(t * 0.9) * 1.5, -0.5, Math.sin(t * 0.9) * 1.5);
@@ -708,8 +808,8 @@ export function buildScene() {
          *  공과 같은 속도로 방향 다발을 돌리고, 각 방향이 방에 맞는 자리에 점을 놓는다.
          *  멀리 맞을수록 점이 커지고 옅어진다 — 실제로 퍼지는 빛과 같은 방향이다. */
         const px = mirrorGrp.position.x, py = mirrorGrp.position.y, pz = mirrorGrp.position.z;
-        const spin = t * 0.55;
-        const tilt = Math.sin(t * 0.21) * 0.1;
+        const spin = spinT;
+        const tilt = Math.sin(spinT * 0.38) * 0.1;
         dotGrp.visible = true;
         for (let i = 0; i < dots.length; i++) {
           const dt = dots[i];
@@ -729,7 +829,7 @@ export function buildScene() {
         // 점 밝기는 색깔 묶음 단위로 — 재질 셋이라 반짝임도 셋으로 엇갈린다
         for (let i = 0; i < dotMats.length; i++) {
           const fl = 0.62 + Math.sin(t * (3.4 + i * 1.1) + i * 2.1) * 0.38;
-          dotMats[i].opacity = 0.9 * e * fl;
+          dotMats[i].opacity = 0.9 * act * fl;
         }
       }
     }

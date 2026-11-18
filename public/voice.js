@@ -42,10 +42,19 @@ export function micAvailable() {
 export function micUnavailableReason() {
   if (micAvailable()) return '';
   if (!window.isSecureContext) {
-    return '이 주소에서는 브라우저가 마이크를 열어 주지 않습니다. ' +
-      'localhost 로 들어오거나 https 로 접속해야 노래할 수 있습니다. (듣기는 됩니다)';
+    return '마이크를 열 수 없는 주소입니다 (' + location.origin + '). ' +
+      '브라우저는 localhost 나 https 에서만 마이크를 내줍니다 — ' +
+      'http://localhost:3000 으로 들어오면 됩니다. (지금도 듣기는 됩니다)';
   }
   return '이 브라우저에서 마이크를 쓸 수 없습니다. (듣기는 됩니다)';
+}
+
+/* 지금 상태를 한 줄로 — 왜 안 되는지 사람에게 보여 줄 때 쓴다 */
+export function diagnose() {
+  return '노래방 ' + (enabled ? '켜짐' : '꺼짐') +
+    ' · 마이크 API ' + (micAvailable() ? '있음' : '없음') +
+    ' · 보안 컨텍스트 ' + (window.isSecureContext ? '예' : '아니오') +
+    ' · 연결 ' + peers.size + '개';
 }
 
 export function init(opts) {
@@ -179,7 +188,9 @@ export function setEnabled(on, ids) {
   if (on === enabled) return;
   enabled = on;
   if (on) {
-    setPeers(ids || []);
+    // 연결을 못 맺더라도 모드 자체는 켜져 있어야 한다 (듣기·마이크 UI 가 살아 있게)
+    try { setPeers(ids || []); }
+    catch (e) { onNotice('목소리 연결을 시작하지 못했습니다: ' + ((e && e.message) || e)); }
   } else {
     for (const id of Array.from(peers.keys())) dropPeer(id);
     stopMic();
@@ -198,7 +209,10 @@ function stopMic() {
  * 켤 때 처음 한 번은 브라우저가 권한을 묻는다. */
 export function setMic(on) {
   on = !!on;
-  if (!enabled) return Promise.resolve(false);
+  if (!enabled) {
+    onNotice('노래방 모드가 켜져 있어야 마이크를 쓸 수 있습니다.');
+    return Promise.resolve(false);
+  }
   micWanted = on;
 
   if (!on) { stopMic(); return Promise.resolve(true); }
@@ -236,6 +250,9 @@ export function setBlocked(id, on) {
 }
 export function isBlocked(id) { return blocked.has(id | 0); }
 export function blockedList() { return Array.from(blocked); }
+
+/* 음정 분석기가 같은 스트림을 물어 갈 수 있게 내준다 */
+export const micMedia = () => micStream;
 
 export const isEnabled = () => enabled;
 export const isMicOn = () => !!(micStream && micWanted);

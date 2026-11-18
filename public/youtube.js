@@ -18,7 +18,7 @@ const DEFAULT_VOL = 25;             // 처음 입장 시 기본 볼륨 (%)
 let player = null;
 let ready = false;
 let loadedId = null;
-let onEnded = null, onBlocked = null;
+let onEnded = null, onBlocked = null, onVideoError = null;
 
 let base = { idx: 0, id: null, playing: false, position: 0, serverNow: 0 };
 let clockOffset = 0;
@@ -55,6 +55,7 @@ export function mountScreen(cssScene, tvAt, tvSize) {
 export function init(opts) {
   onEnded = opts.onEnded;
   onBlocked = opts.onBlocked;
+  onVideoError = opts.onVideoError;
 
   window.onYouTubeIframeAPIReady = function () {
     player = new window.YT.Player('tv-player', {
@@ -70,7 +71,14 @@ export function init(opts) {
           // 자막 설정을 새 영상에 다시 적용 (영상마다 초기화되므로)
           if (e.data === 1 && ccOn) applyCaptions();
         },
-        onError: function () { if (onEnded) onEnded(); }
+        /* 유튜브가 돌려주는 오류 번호를 그냥 버리면 안 된다.
+         *  101·150 은 '올린 사람이 외부 사이트 재생을 막았다' 는 뜻이라,
+         *  말해 주지 않으면 쓰는 사람은 왜 안 되는지 알 길이 없다. */
+        onError: function (e) {
+          const code = (e && e.data) | 0;
+          if (onVideoError) onVideoError(code, loadedId);
+          if (onEnded) onEnded();
+        }
       }
     });
   };
@@ -270,6 +278,18 @@ export function currentTime() {
 export function duration() {
   try { return player && ready ? (player.getDuration() || 0) : 0; }
   catch (e) { return 0; }
+}
+
+/* 유튜브 오류 번호를 사람 말로 */
+export function errorText(code) {
+  if (code === 101 || code === 150) {
+    return '올린 사람이 다른 사이트에서의 재생을 막아 둔 영상입니다. ' +
+      '유튜브에서는 보이지만 여기서는 틀 수 없습니다.';
+  }
+  if (code === 100) return '없거나 비공개로 바뀐 영상입니다.';
+  if (code === 2) return '영상 주소가 올바르지 않습니다.';
+  if (code === 5) return '이 브라우저에서 재생할 수 없는 영상입니다.';
+  return '영상을 재생하지 못했습니다 (오류 ' + code + ').';
 }
 
 export const isReady = () => ready;

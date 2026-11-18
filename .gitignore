@@ -1,6 +1,9 @@
 # 의존성 — three.js 는 public/vendor/ 에 복사해 두므로 저장소에는 넣지 않는다
 node_modules/
 
+# 분석해 둔 주선율 — 다시 만들 수 있는 것이라 저장소에는 넣지 않는다
+cache/
+
 # 로그 / 임시
 *.log
 npm-debug.log*

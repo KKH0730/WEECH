@@ -9,6 +9,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const Melody = require('./melody.js');
 
 const PORT = Number(process.env.PORT) || 3000;
 const ROOM_CAP = 20;        // 방 하나 정원
@@ -307,6 +308,38 @@ function fetchTitle(id) {
     .finally(() => clearTimeout(timer));
 }
 
+/* ---- 음정 게임모드의 기준선 ---------------------------------------
+ *  MR 에서 뽑아낸 주선율을 방에 보낸다. 분석은 서버가 한 번만 하고
+ *  영상 ID 로 캐시하므로, 같은 곡을 다른 방에서 틀면 기다림 없이 바로 나간다.
+ *  yt-dlp·ffmpeg 이 없으면 이 기능만 조용히 빠진다.
+ * ------------------------------------------------------------------ */
+function sendMelody(conn, id) {
+  if (!Melody.ready()) { conn.send({ t: 'melody', v: id, state: 'off', msg: Melody.reason() }); return; }
+  const hit = Melody.cached(id);
+  if (hit) { conn.send({ t: 'melody', v: id, notes: hit.notes, failed: !!hit.failed }); return; }
+  conn.send({ t: 'melody', v: id, state: 'pending' });
+  // 분석을 걸어 두고, 끝나면 '물어본 사람' 에게 반드시 답한다.
+  // prepMelody 의 방 전체 방송은 지금 트는 곡만 다루므로 여기서 따로 챙긴다.
+  Melody.request(id).then((chart) => {
+    if (chart && conn.alive) conn.send({ t: 'melody', v: id, notes: chart.notes, failed: !!chart.failed });
+  });
+}
+
+/* 지금 곡(과 다음 곡)을 미리 분석해 둔다. 끝나면 방 전체에 뿌린다. */
+function prepMelody(r) {
+  if (r.mode !== 'karaoke' || !r.pgame || !Melody.ready() || !r.playlist.length) return;
+  const here = r.playlist[r.idx];
+  const next = r.playlist[(r.idx + 1) % r.playlist.length];
+  if (here) {
+    Melody.request(here.id).then((chart) => {
+      if (!chart || !rooms.has(r.code)) return;
+      broadcast(r, { t: 'melody', v: here.id, notes: chart.notes, failed: !!chart.failed });
+    });
+  }
+  // 다음 곡은 조용히 미리 — 넘어갔을 때 기다리지 않게
+  if (next && next.id !== (here && here.id)) Melody.request(next.id);
+}
+
 /* 재생목록에 제목을 채워 넣고, 다 차면 방에 알린다 */
 function hydrateTitles(room) {
   const pending = room.playlist.filter((it) => !it.title);
@@ -545,7 +578,7 @@ function roomPayload(r) {
     code: r.code, title: r.title, hostId: r.hostId, coHosts: Array.from(r.coHosts || []), cap: ROOM_CAP,
     playlist: r.playlist, idx: r.idx,
     playing: r.playing, position: currentPosition(r), serverNow: Date.now(),
-    karaoke: !!r.karaoke
+    mode: r.mode || 'cinema', pgame: !!r.pgame
   };
 }
 
@@ -566,6 +599,7 @@ function currentPosition(r) {
 }
 
 function setPlayback(r, patch) {
+  const was = r.idx;
   if (patch.idx !== undefined) r.idx = patch.idx;
   if (patch.position !== undefined) r.position = Math.max(0, patch.position);
   if (patch.playing !== undefined) r.playing = !!patch.playing;
@@ -574,6 +608,7 @@ function setPlayback(r, patch) {
     t: 'play', idx: r.idx, playing: r.playing,
     position: r.position, serverNow: r.updatedAt
   });
+  if (was !== r.idx) prepMelody(r);
 }
 
 /* ---- 영화관 좌석 ------------------------------------------------
@@ -736,7 +771,8 @@ function handleMessage(entry, m, now) {
         kicked: new Map(),               // 재입장 토큰 -> 언제까지 막을지
         playlist: res.items,
         idx: 0, playing: false, position: 0, updatedAt: Date.now(),
-        karaoke: false,                  // 노래방 모드 (방장만 켠다)
+        mode: 'cinema',                  // Play 모드 — 'cinema' | 'karaoke' (방장만 바꾼다)
+        pgame: false,                    // 음정 게임모드 (노래방 안에서만 켤 수 있다)
         users: new Map()
       };
       rooms.set(code, room);
@@ -855,21 +891,22 @@ function handleMessage(entry, m, now) {
      *  주고받을 수 있게 된다. 목소리 자체는 브라우저끼리 직접(P2P) 오가고,
      *  서버는 그 연결을 맺는 쪽지(rtc)만 중계한다 — 음성은 서버를 지나지 않는다.
      * ------------------------------------------------------------------ */
-    case 'karaoke': {
-      if (!isHost) { conn.send({ t: 'err', msg: '방장만 노래방 모드를 켤 수 있습니다.' }); return; }
-      const on = !!m.on;
-      if (room.karaoke === on) return;
-      room.karaoke = on;
-      if (!on) {
-        // 끌 때는 모두의 마이크를 내린다 — 켜 둔 채로 다음 모드까지 새지 않게
+    case 'mode': {
+      if (!isHost) { conn.send({ t: 'err', msg: '방장만 Play 모드를 바꿀 수 있습니다.' }); return; }
+      const v = (m.v === 'karaoke') ? 'karaoke' : 'cinema';
+      if (room.mode === v) return;
+      room.mode = v;
+      if (v !== 'karaoke') {
+        // 영화관으로 돌아가면 목소리와 게임모드는 접는다 — 켜 둔 채로 새지 않게
         for (const u of room.users.values()) { u.mic = false; u.mmute = false; }
+        room.pgame = false;
       }
-      broadcast(room, { t: 'karaoke', on: on, by: user.name });
+      broadcast(room, { t: 'mode', v: v, by: user.name, pgame: !!room.pgame });
       return;
     }
 
     case 'mic': {
-      if (!room.karaoke) return;
+      if (room.mode !== 'karaoke') return;
       const on = !!m.on;
       // 잠겼다는 사실은 쿨다운보다 먼저 알린다 — 연타 가드가 이 알림을 삼키면
       // 누른 사람은 왜 안 켜지는지 알 수 없다
@@ -897,9 +934,34 @@ function handleMessage(entry, m, now) {
       return;
     }
 
+    /* 음정 게임모드 — 노래방 안에서만, 방장만 */
+    case 'pgame': {
+      if (!isHost) { conn.send({ t: 'err', msg: '방장만 음정 게임모드를 켤 수 있습니다.' }); return; }
+      if (room.mode !== 'karaoke') { conn.send({ t: 'err', msg: '노래방 모드에서만 쓸 수 있습니다.' }); return; }
+      const on = !!m.on;
+      if (on && !Melody.ready()) {
+        conn.send({ t: 'err', msg: '이 서버에서는 음정 분석을 쓸 수 없습니다 — ' + Melody.reason() });
+        return;
+      }
+      if (room.pgame === on) return;
+      room.pgame = on;
+      broadcast(room, { t: 'pgame', on: on });
+      if (on) prepMelody(room);
+      return;
+    }
+
+    /* 지금 곡의 기준선(주선율)을 달라 */
+    case 'melody': {
+      const id = String(m.v || '');
+      if (!/^[A-Za-z0-9_-]{11}$/.test(id)) return;
+      sendMelody(conn, id);
+      if (room.mode === 'karaoke' && room.pgame) prepMelody(room);
+      return;
+    }
+
     /* 연결용 쪽지 중계 — 내용은 들여다보지 않고 받는 사람에게만 넘긴다 */
     case 'rtc': {
-      if (!room.karaoke) return;
+      if (room.mode !== 'karaoke') return;
       const target = room.users.get(m.to | 0);
       if (!target || target.id === user.id || target.gone) return;
       target.conn.send({ t: 'rtc', from: user.id, data: m.data });
@@ -1091,11 +1153,19 @@ setInterval(() => {
   }
 }, 15000);
 
+Melody.init({
+  dir: path.join(__dirname, 'cache', 'melody'),
+  log: (s) => console.log(s)
+});
+
 server.listen(PORT, () => {
   console.log('');
   console.log('  [ 위치 WEECH — 유튜브를 같이 보는 3D 라운지 ]');
   console.log('  ----------------------------------------');
   console.log('  문이 열렸습니다 :  http://localhost:' + PORT);
   console.log('  방 정원 ' + ROOM_CAP + '명 · 최대 ' + MAX_ROOMS + '개 방');
+  console.log(Melody.ready()
+    ? '  음정 게임모드 :  준비됨 (MR 에서 주선율을 뽑아 캐시합니다)'
+    : '  음정 게임모드 :  꺼짐 — ' + Melody.reason() + ' (나머지는 그대로 돕니다)');
   console.log('');
 });
