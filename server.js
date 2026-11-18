@@ -667,7 +667,7 @@ function restore(entry, user) {
 function leaveRoom(user) {
   const r = user.room;
   if (!r) return;
-  user.mic = false; user.mmute = false;
+  user.mic = false;
   clearTimeout(user.graceTimer);
   user.graceTimer = null;
   user.gone = 0;
@@ -915,7 +915,7 @@ function handleMessage(entry, m, now) {
       room.mode = v;
       if (v !== 'karaoke') {
         // 영화관으로 돌아가면 목소리와 게임모드는 접는다 — 켜 둔 채로 새지 않게
-        for (const u of room.users.values()) { u.mic = false; u.mmute = false; }
+        for (const u of room.users.values()) u.mic = false;
         room.pgame = false;
       }
       broadcast(room, { t: 'mode', v: v, by: user.name, pgame: !!room.pgame });
@@ -925,29 +925,12 @@ function handleMessage(entry, m, now) {
     case 'mic': {
       if (room.mode !== 'karaoke') return;
       const on = !!m.on;
-      // 잠겼다는 사실은 쿨다운보다 먼저 알린다 — 연타 가드가 이 알림을 삼키면
-      // 누른 사람은 왜 안 켜지는지 알 수 없다
-      if (on && user.mmute) { conn.send({ t: 'err', msg: '방장이 회원님의 마이크를 꺼 두었습니다.' }); return; }
+      // 방장이 음소거해 둔 사람도 마이크는 제 뜻대로 켜고 끈다 — 남에게 안 들릴 뿐이다
       if (user.mic === on) return;
       if (now - user.lastMic < 400) return;      // 연타로 재협상이 쏟아지지 않게
       user.lastMic = now;
       user.mic = on;
       broadcast(room, { t: 'mic', id: user.id, on: on });
-      return;
-    }
-
-    case 'micmute': {
-      if (!isHost) { conn.send({ t: 'err', msg: '방장만 남의 마이크를 끌 수 있습니다.' }); return; }
-      const target = room.users.get(m.id | 0);
-      if (!target || target.id === user.id) return;
-      const on = !!m.on;                          // on = 잠근다
-      if (target.mmute === on) return;
-      target.mmute = on;
-      if (on && target.mic) {
-        target.mic = false;
-        broadcast(room, { t: 'mic', id: target.id, on: false });
-      }
-      broadcast(room, { t: 'micmute', id: target.id, on: on, name: target.name });
       return;
     }
 
@@ -1135,7 +1118,6 @@ function admit(entry, room, name) {
     x: 600 + (Math.random() - 0.5) * 240, y: 760 + (Math.random() - 0.5) * 80,
     dir: -Math.PI / 2, st: 0, h: 0, joinedAt: Date.now(),
     mic: false,                      // 본인이 마이크를 켰나
-    mmute: false,                    // 방장이 이 사람 마이크를 잠갔나
     lastChat: 0, lastArrow: 0, lastRename: 0, lastMic: 0
   };
   room.users.set(u.id, u);
@@ -1145,7 +1127,7 @@ function admit(entry, room, name) {
 
 const pubUser = (u) => ({
   id: u.id, name: u.name, x: Math.round(u.x), y: Math.round(u.y),
-  gone: u.gone ? 1 : 0, seat: u.seat, mic: u.mic ? 1 : 0, mmute: u.mmute ? 1 : 0
+  gone: u.gone ? 1 : 0, seat: u.seat, mic: u.mic ? 1 : 0
 });
 const userList = (r) => Array.from(r.users.values()).map(pubUser);
 
@@ -1157,7 +1139,7 @@ setInterval(() => {
     for (const u of r.users.values()) {
       arr.push([u.id, Math.round(u.x), Math.round(u.y), Math.round(u.dir * 100) / 100, u.st, u.name, Math.round(u.h || 0),
         Math.round((u.hy || 0) * 100) / 100, Math.round((u.hp || 0) * 100) / 100, u.gone ? 1 : 0,
-        u.mic ? 1 : 0, u.mmute ? 1 : 0]);
+        u.mic ? 1 : 0]);
     }
     const msg = JSON.stringify({ t: 's', u: arr });
     for (const u of r.users.values()) u.conn.send(msg);

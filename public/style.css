@@ -60,18 +60,7 @@ input,textarea{font-family:inherit;}
   touch-action: none;        /* 터치 드래그를 브라우저가 가로채지 않게 */
 }
 
-/* 소리 켜기 — 컨트롤러 아래 묶음(#topDock) 안에서 노래방 막대 옆에 선다.
- * 브라우저가 소리 있는 자동재생을 막았을 때만 나타난다. */
-#unmuteBtn{
-  flex:none;padding:0.58em 1.05em;border-radius:999px;border:0;cursor:pointer;
-  background:var(--accent);color:var(--accent-ink);
-  font-size:var(--ui-fs);font-weight:700;letter-spacing:.02em;white-space:nowrap;
-  box-shadow:0 6px 24px rgba(255,184,77,.38);
-  animation:popIn .35s ease both;
-}
-#unmuteBtn:hover{filter:brightness(1.08);}
 @keyframes popIn{from{opacity:0;transform:scale(.92)}to{opacity:1;transform:scale(1)}}
-#unmuteBtn[hidden]{display:none;}
 
 /* ───────────── 로비 ───────────── */
 
@@ -737,14 +726,17 @@ body.cinema #playerbar:hover{opacity:1;}
 .person:hover .pmore,.person .pmore.open{opacity:1;}
 .person .pmore:hover,.person .pmore.open{background:rgba(255,255,255,.12);color:var(--ink);}
 
-/* 노래방일 때 줄마다 붙는 마이크 상태. 방장이 잠근 줄에는 빗금을 긋는다 */
-.person .micst{position:relative;flex:none;font-size:14px;line-height:1;}
-.person .micst.off{opacity:.28;filter:grayscale(1);}
-.person .micst.lock{opacity:.4;filter:grayscale(1);}
-.person .micst.lock::after{
-  content:'';position:absolute;left:-2px;top:50%;width:19px;height:1.8px;
-  background:var(--danger);transform:rotate(-22deg);border-radius:1px;
+/* 노래방일 때 줄마다 붙는 마이크 상태 — 켬(분홍 마이크) · 음소거(옅은 빗금 마이크) */
+.person .micst{
+  position:relative;flex:none;width:25px;height:25px;border-radius:7px;
+  display:flex;align-items:center;justify-content:center;color:var(--dim);
 }
+.person .micst svg{width:16px;height:16px;}
+.person .micst.on{color:#ff5ab0;}
+.person .micst.off{opacity:.45;}
+/* 내 줄의 마이크만 버튼 — 누르면 음소거 · 마이크 고르기 창 */
+.person button.micst{border:0;background:none;padding:0;cursor:pointer;font:inherit;transition:.15s;}
+.person button.micst.mysel:hover,.person button.micst.mysel.open{background:rgba(255,255,255,.12);color:var(--ink);opacity:1;}
 /* 소리 차단 — 줄마다 붙는 헤드셋. 늘 보이되 평소엔 옅게 두고,
  * 막아 둔 줄은 빗금을 두른 채 또렷하게 남는다 (내 귀에만 적용되는 설정이다). */
 .person .pblk{
@@ -801,6 +793,30 @@ body.cinema #playerbar:hover{opacity:1;}
 #pmenu .pmi.danger:hover{background:rgba(255,122,107,.16);}
 #pmenu .sep{height:1px;margin:3px 4px;background:var(--line);}
 
+/* 사람별 소리 크기 — 헤드셋을 누르면 뜬다 (pmenu 처럼 목록 바깥에 fixed) */
+#volPop{
+  position:fixed;z-index:200;width:220px;padding:10px 12px;
+  display:flex;flex-direction:column;gap:8px;
+  background:rgba(26,23,32,.97);border:1px solid var(--line);border-radius:10px;
+  backdrop-filter:blur(10px);box-shadow:0 10px 28px rgba(0,0,0,.55);
+  animation:rise .14s ease both;font-size:12.5px;
+}
+#volPop[hidden]{display:none;}
+.vp-name{font-weight:700;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.vp-row{display:flex;align-items:center;gap:8px;color:var(--dim);}
+.vp-row input{flex:1;min-width:0;accent-color:#ff5ab0;}
+#vpPct{flex:none;width:3.2em;text-align:right;color:var(--ink);font-variant-numeric:tabular-nums;}
+#volPop.blocked .vp-row{opacity:.4;}
+.vp-blk{
+  padding:7px 10px;border-radius:7px;border:1px solid var(--line);cursor:pointer;
+  background:rgba(255,255,255,.06);color:var(--ink);font:inherit;transition:.12s;
+}
+.vp-blk:hover{background:rgba(255,255,255,.12);}
+.vp-blk.on{background:rgba(255,122,107,.18);border-color:rgba(255,122,107,.5);color:#ffb3a8;}
+.vp-note{font-size:11px;color:var(--dim);}
+/* 소리를 줄여 둔 사람 — 헤드셋을 조금 또렷하게 남겨 표시한다 */
+.person .pblk.quiet{opacity:1;color:#ffb84d;}
+
 
 @media (max-width:720px){
   #peopleList{ max-height:32vh; }
@@ -841,9 +857,9 @@ body.cinema #playerbar:hover{opacity:1;}
   #keyhint{ display:none; }
 }
 
-/* ───────────── 노래방 막대 ─────────────
-   모드가 켜졌을 때만 컨트롤러 바로 아래에 뜬다.
-   내 마이크를 켜고 끄는 단 하나의 버튼을 들고 있다. */
+/* ───────────── 모드 알림 ─────────────
+   모드를 바꾸면 '🎬 영화관 모드' / '🪩 노래방 모드' 가 5초 동안 뜬 뒤 흐려지며 사라진다.
+   마이크는 참여자 목록의 내 마이크에서 켜고 끈다. */
 /* 컨트롤러 아래 한 줄 — 여기 든 것들이 가운데 정렬로 나란히 선다 */
 #topDock{
   position:absolute;left:50%;top:calc(var(--ctl-full) + 12px);transform:translateX(-50%);
@@ -853,41 +869,58 @@ body.cinema #playerbar:hover{opacity:1;}
 }
 #topDock > *{pointer-events:auto;}
 
-#karaokeBar{
-  flex:none;cursor:pointer;                        /* 막대 전체가 과녁 */
-  font-size:1em;
-  display:flex;align-items:center;gap:0.7em;white-space:nowrap;
-  padding:0.4em 0.5em 0.4em 0.9em;border-radius:999px;
-  background:var(--glass);border:1px solid rgba(255,90,176,.42);
-  backdrop-filter:blur(10px);box-shadow:0 0 20px rgba(255,90,176,.18);
+#modePill{
+  flex:none;font-size:1em;
+  display:flex;align-items:center;gap:0.55em;white-space:nowrap;
+  padding:0.45em 1em;border-radius:999px;
+  background:var(--glass);border:1px solid rgba(255,184,77,.35);
+  backdrop-filter:blur(10px);box-shadow:0 0 16px rgba(255,184,77,.12);
+  animation:popIn .3s ease both;
 }
-#karaokeBar[hidden]{display:none;}
+#modePill[hidden]{display:none;}
+/* 사라질 때 — 살짝 위로 뜨며 흐려진다 (popIn 이 opacity 를 붙들고 있어 transition 이 아니라 animation 으로) */
+#modePill.out{animation:mpFade .7s ease forwards;}
+@keyframes mpFade{from{opacity:1;transform:translateY(0)}to{opacity:0;transform:translateY(-6px)}}
+.mp-ic{font-size:1.15em;line-height:1;}
+.mp-t{font-weight:700;color:var(--accent);letter-spacing:.02em;}
+#modePill.karaoke{border-color:rgba(255,90,176,.42);box-shadow:0 0 20px rgba(255,90,176,.18);}
+#modePill.karaoke .mp-t{color:#ff9ad2;}
+#modePill.karaoke .mp-ic{animation:kbspin 7s linear infinite;}
+
 /* 미러볼처럼 천천히 돈다 */
-.kb-ic{font-size:1.2em;line-height:1;animation:kbspin 7s linear infinite;}
 @keyframes kbspin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
-.kb-t{font-weight:700;color:#ff9ad2;letter-spacing:.02em;}
-.kb-mic{
-  flex:none;display:flex;align-items:center;gap:0.4em;cursor:pointer;
-  height:2.15em;padding:0 0.85em;border-radius:999px;
-  border:1px solid var(--line);background:rgba(255,255,255,.07);
-  color:var(--dim);transition:.15s;
+/* 마이크 고르기 — 참여자 목록의 내 마이크를 누르면 뜬다 (목록 바깥에 fixed) */
+#micMenu{
+  position:fixed;z-index:200;cursor:default;width:240px;padding:10px 12px;
+  display:flex;flex-direction:column;gap:8px;white-space:normal;
+  background:rgba(26,23,32,.97);border:1px solid var(--line);border-radius:10px;
+  backdrop-filter:blur(10px);box-shadow:0 10px 28px rgba(0,0,0,.55);
+  animation:rise .14s ease both;font-size:12.5px;
 }
-.kb-mic:hover{background:rgba(255,255,255,.14);color:var(--ink);}
-/* 켜면 말하고 있다는 게 멀리서도 보이게 */
-.kb-mic.on{background:#ff5ab0;border-color:transparent;color:#2b0d1d;font-weight:700;}
-.kb-mic.on:hover{background:#ff74be;color:#2b0d1d;}
-.kb-mic.locked{opacity:.5;}      /* 눌리긴 한다 — 누르면 왜 잠겼는지 말해 준다 */
-/* 권한 창을 기다리는 동안 — 눌러도 반응하지 않는다는 걸 보여 준다 */
-.kb-mic.busy{opacity:.7;cursor:progress;animation:kbpulse 1s ease-in-out infinite;}
-@keyframes kbpulse{0%,100%{opacity:.7}50%{opacity:1}}
-.kb-mic svg{width:1.15em;height:1.15em;flex:none;}
-.kb-lbl{font-size:0.92em;}
-/* 막대가 뜬 만큼 토스트를 아래로 민다 */
-body.karaoke #toast{top:calc(var(--ctl-full) + 56px);}
+#micMenu[hidden]{display:none;}
+.mm-head{font-size:11px;color:var(--dim);padding-top:2px;}
+.mm-state{font-weight:400;font-size:11px;color:#ff5ab0;margin-left:4px;}
+#micMenu.muted .mm-state{color:var(--danger);}
+#micList{margin:-4px -6px 0;}
+.mm-item{
+  display:flex;align-items:center;gap:0.5em;width:100%;text-align:left;cursor:pointer;
+  padding:0.55em 0.6em;border:0;border-radius:9px;background:none;color:var(--ink);font:inherit;font-size:0.92em;
+}
+.mm-item:hover{background:rgba(255,255,255,.08);}
+.mm-item .mm-chk{flex:none;width:1em;color:#ff5ab0;font-weight:700;}
+.mm-item .mm-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.mm-item.on{color:#ff9ad2;}
+.mm-meter{display:flex;align-items:center;gap:8px;padding-top:8px;border-top:1px solid var(--line);}
+.mm-mlbl{font-size:0.8em;color:var(--dim);flex:none;}
+.mm-track{flex:1;height:6px;border-radius:3px;background:rgba(255,255,255,.1);overflow:hidden;}
+#micMeterFill{height:100%;width:0;background:#ff5ab0;border-radius:3px;transition:width .08s linear;}
+.mm-hint{font-size:11px;color:var(--dim);line-height:1.45;}
+/* 모드 알림이 떠 있는 동안 토스트를 그 아래로 민다 */
+body.modeshow #toast{top:calc(var(--ctl-full) + 56px);}
 /* 컨트롤러를 접으면 탭만 남으므로 아래 것들도 따라 올라간다 */
 body.barmin #topDock{top:calc(var(--tab-h) + 12px);}
 body.barmin #toast{top:calc(var(--tab-h) + 16px);}
-body.barmin.karaoke #toast{top:calc(var(--tab-h) + 56px);}
+body.barmin.modeshow #toast{top:calc(var(--tab-h) + 56px);}
 /* 시청·전체화면에서는 막대도 함께 흐려진다 */
 body.watching #topDock{opacity:.5;transition:opacity .4s;}
 body.watching #topDock:hover{opacity:1;}

@@ -433,7 +433,7 @@ function connect() {
         });
         for (const id of Array.from(others.keys())) if (!seen.has(id)) removeOther(id);
         peopleCache = (m.u || []).map((a) => ({
-          id: a[0], name: a[5], gone: !!a[9], mic: !!a[10], mmute: !!a[11]
+          id: a[0], name: a[5], gone: !!a[9], mic: !!a[10]
         }));
         peopleCache.sort((a, b) => (b.id === myId) - (a.id === myId) || a.id - b.id);
         renderPeopleHead();
@@ -538,23 +538,15 @@ function connect() {
         break;
       }
 
-      case 'mic':
+      case 'mic': {
+        // 명단 갱신(주기적)을 기다리지 않고 바로 고친다 — 안 그러면 아이콘과 ⋯ 메뉴가 옛 상태로 남는다
+        const pm = peopleCache.find((x) => x.id === m.id);
+        if (pm) pm.mic = !!m.on;
         if (m.id === myId) { micOn = !!m.on; updateMicBtn(); }
         peopleSig = '';
         renderPeople();
         break;
-
-      case 'micmute':
-        if (m.id === myId) {
-          if (m.on) { micOn = false; Voice.setMic(false); }
-          toast(m.on ? '방장이 회원님의 마이크를 껐습니다.' : '마이크 잠금이 풀렸습니다.', 3400);
-          updateMicBtn();
-        } else {
-          logMsg(esc(m.name || '누군가') + (m.on ? ' 님의 마이크가 꺼졌습니다.' : ' 님의 마이크 잠금이 풀렸습니다.'), 'sys');
-        }
-        peopleSig = '';
-        renderPeople();
-        break;
+      }
 
       // 연결용 쪽지 — 내용은 voice.js 가 푼다
       case 'rtc':
@@ -617,23 +609,15 @@ Voice.init({
 });
 
 const meInList = () => peopleCache.find((p) => p.id === myId) || null;
-const micLocked = () => { const m = meInList(); return !!(m && m.mmute); };
-
 function syncVoicePeers() {
   if (karaoke) Voice.setPeers(Array.from(others.keys()));
 }
 
+/* 내 마이크 상태가 바뀌었다 — 참여자 목록의 내 마이크 아이콘과 마이크 창을 다시 그린다 */
 function updateMicBtn() {
-  const b = $('micBtn');
-  if (!b) return;
-  const locked = micLocked();
-  b.classList.toggle('on', micOn && !locked);
-  b.classList.toggle('locked', locked);
-  // disabled 로 막지 않는다 — 막아 두면 눌러도 아무 일이 없어
-  // '왜 안 되는지' 를 말해 줄 기회조차 없다
-  b.disabled = false;
-  const lbl = b.querySelector('.kb-lbl');
-  if (lbl) lbl.textContent = locked ? '방장이 껐습니다' : (micOn ? '마이크 끄기' : '마이크 켜기');
+  peopleSig = '';
+  renderPeople();
+  if (micMenuOpen()) renderMicList();
 }
 
 /* Play 모드 — 영화관(영사기) · 노래방(미러볼) 둘 중 하나.
@@ -647,7 +631,6 @@ function setMode(v, byName) {
   if (room) room.mode = v;
   world.setMode(v);                           // 영사기와 미러볼이 자리를 주고받는다
   document.body.classList.toggle('karaoke', on);
-  $('karaokeBar').hidden = !on;
   $('miCinema').classList.toggle('on', !on);
   $('miKaraoke').classList.toggle('on', on);
   world.setPitchVisible(on);                    // 스크린 아래 음정 띠
@@ -672,43 +655,152 @@ function setMode(v, byName) {
   peopleSig = '';
   renderPeople();
   if (was === v || screen !== 'room') return;
+  showModePill(v);
   if (on) {
     logMsg('🪩 <b>노래방 모드</b>' + (byName ? ' — ' + esc(byName) : '') +
-      '. 미러볼이 내려옵니다. 위쪽 <b>마이크 켜기</b> 로 노래하세요.', 'sys');
+      '. 미러볼이 내려옵니다. 왼쪽 <b>참여자</b> 목록에서 내 마이크를 눌러 켜세요.', 'sys');
     if (!Voice.micAvailable()) logMsg(esc(Voice.micUnavailableReason()), 'sys');
   } else {
     logMsg('🎬 <b>영화관 모드</b>' + (byName ? ' — ' + esc(byName) : '') + '. 영사기가 내려옵니다.', 'sys');
   }
 }
 
-/* 마이크 버튼 — 어떤 길로 실패하든 왜 그런지 말해 준다.
- * 처음 켤 때는 브라우저 권한 창이 떠 몇 초 걸릴 수 있어 그동안 '여는 중' 을 보여 준다. */
-/* 작은 버튼만 과녁이면 놓치기 쉬워, 막대 아무 데나 눌러도 토글된다 */
-$('karaokeBar').addEventListener('click', toggleMic);
+/* 모드를 바꾸면 위 가운데에 '🎬 영화관 모드' / '🪩 노래방 모드' 를 5초 동안 띄운다 */
+const MODE_PILL_MS = 5000;
+const MODE_PILL_FADE_MS = 700;                  // CSS mpFade 와 같은 길이
+let modePillTimer = 0;
+function showModePill(v) {
+  const on = v === 'karaoke';
+  const el = $('modePill');
+  $('mpIc').textContent = on ? '🪩' : '🎬';
+  $('mpT').textContent = on ? '노래방 모드' : '영화관 모드';
+  el.classList.toggle('karaoke', on);
+  el.classList.remove('out');
+  el.hidden = false;
+  document.body.classList.add('modeshow');
+  void el.offsetWidth;                            // 다시 띄울 때 애니메이션을 처음부터
+  clearTimeout(modePillTimer);
+  modePillTimer = setTimeout(() => {
+    el.classList.add('out');                      // 스르르 사라진 뒤 숨긴다
+    modePillTimer = setTimeout(() => {
+      el.hidden = true;
+      el.classList.remove('out');
+      document.body.classList.remove('modeshow');
+    }, MODE_PILL_FADE_MS);
+  }, MODE_PILL_MS);
+}
+
+/* 내 마이크 켜기/끄기 — 참여자 목록의 내 마이크를 누르면 뜨는 창의 '음소거' 버튼이 부른다.
+ * 어떤 길로 실패하든 왜 그런지 말해 준다. 처음 켤 때는 브라우저 권한 창이 떠
+ * 몇 초 걸릴 수 있어 그동안 '여는 중' 을 보여 준다. */
+let micBusy = false;
 
 function toggleMic() {
-  const b = $('micBtn');
-  if (b.classList.contains('busy')) return;              // 권한 창을 기다리는 중
+  if (micBusy) return;                                    // 권한 창을 기다리는 중
   if (!karaoke) { toast('노래방 모드에서만 마이크를 쓸 수 있습니다.', 3000); return; }
-  if (micLocked()) { toast('방장이 회원님의 마이크를 꺼 두었습니다.', 3000); return; }
   const want = !micOn;
   if (want && !Voice.micAvailable()) { toast(Voice.micUnavailableReason(), 8000); return; }
 
-  if (want) { b.classList.add('busy'); b.querySelector('.kb-lbl').textContent = '여는 중…'; }
+  const mb = $('mmMute');
+  if (want) { micBusy = true; mb.textContent = '여는 중…'; mb.disabled = true; }
+  const done = () => { micBusy = false; mb.disabled = false; };
   Voice.setMic(want).then((ok) => {
-    b.classList.remove('busy');
+    done();
     if (want && !ok) { updateMicBtn(); return; }          // 이유는 voice.js 가 이미 띄웠다
     micOn = want;
     // 음정 분석기도 같은 스트림을 문다 (출력에는 잇지 않아 내 목소리가 되돌아오지 않는다)
     if (micOn) { pitchReset(); Pitch.start(Voice.micMedia()); } else { Pitch.stop(true); pitchReset(); }
     updateMicBtn();
     send({ t: 'mic', on: micOn });
-    if (want) toast('마이크가 켜졌습니다. ' + Voice.diagnose(), 3200);
+    toast(want ? '🎙 마이크 켜짐 · ' + Voice.activeMicName() : '마이크를 껐습니다', 2400);
   }).catch((e) => {
-    b.classList.remove('busy');
+    done();
     updateMicBtn();
     toast('마이크 오류 — ' + ((e && e.message) || e), 6000);
   });
+}
+
+/* ---- 내 마이크 창 --------------------------------------------------
+ *  참여자 목록의 내 마이크를 누르면 음소거 버튼과 마이크 목록이 뜬다. 같은 PC 에 마이크가 여럿이면(헤드셋 · 본체 단자 ·
+ *  가상 장치) 엉뚱한 것이 잡혀 무음만 보낼 수 있어, 입력 크기 막대로 바로 확인하게 한다.
+ * ------------------------------------------------------------------ */
+let micMenuRaf = 0;
+
+function micMenuOpen() { return !$('micMenu').hidden; }
+
+function renderMicList() {
+  Voice.listMics().then((list) => {
+    const cur = Voice.currentMic();
+    const box = $('micList');
+    const named = list.filter((d) => d.label);
+    if (!named.length) {
+      box.innerHTML = '<div class="mm-hint">마이크를 한 번 켜면 이름이 보입니다.</div>';
+      return;
+    }
+    // 별칭('default')으로 열렸으면 같은 묶음(groupId)의 실제 장치에 표시한다
+    const isCur = (d) => d.id === cur.id ||
+      (cur.group && (!cur.id || cur.id === 'default') && d.group === cur.group);
+    box.innerHTML = named.map((d) =>
+      '<button class="mm-item' + (isCur(d) ? ' on' : '') + '" data-dev="' + esc(d.id) + '">' +
+      '<span class="mm-chk">' + (isCur(d) ? '✓' : '') + '</span>' +
+      '<span class="mm-name" title="' + esc(d.label) + '">' + esc(Voice.shortMicName(d.label)) +
+      '</span></button>').join('');
+  });
+  $('micHint').textContent = micOn
+    ? '말해 보세요 — 막대가 움직이지 않으면 다른 마이크를 고르세요.'
+    : '음소거를 풀면 입력 크기가 보입니다.';
+  const mb = $('mmMute');
+  mb.textContent = micOn ? '음소거' : '음소거 풀기';
+  mb.classList.toggle('on', !micOn);
+  $('mmState').textContent = micOn ? '마이크 켜짐' : '음소거 중';
+  $('micMenu').classList.toggle('muted', !micOn);
+}
+
+function tickMicMeter() {
+  if (!micMenuOpen()) { micMenuRaf = 0; return; }
+  $('micMeterFill').style.width = Math.round(Voice.micLevel() * 100) + '%';
+  micMenuRaf = requestAnimationFrame(tickMicMeter);
+}
+
+/* 참여자 목록의 내 마이크 아래에 띄운다. 목록이 스크롤 상자라 메뉴는 바깥(fixed)에 있다 */
+function setMicMenu(open, anchor) {
+  const menu = $('micMenu');
+  menu.hidden = !open;
+  const mine = $('peopleList').querySelector('button.mysel');
+  if (mine) mine.classList.toggle('open', open);
+  if (!open) return;
+  renderMicList();
+  if (!micMenuRaf) micMenuRaf = requestAnimationFrame(tickMicMeter);
+  const a = anchor || mine;
+  if (!a) return;
+  const r = a.getBoundingClientRect();
+  const mw = menu.offsetWidth, mh = menu.offsetHeight;
+  let left = r.left, top = r.bottom + 6;
+  if (left + mw > innerWidth - 8) left = innerWidth - 8 - mw;
+  if (left < 8) left = 8;
+  if (top + mh > innerHeight - 8) top = Math.max(8, r.top - 6 - mh);
+  menu.style.left = left + 'px';
+  menu.style.top = top + 'px';
+}
+$('mmMute').addEventListener('click', (e) => {
+  e.stopPropagation();
+  toggleMic();                                     // 노래방 막대의 마이크 버튼과 같은 일 — 끝나면 창도 다시 그린다
+});
+$('micMenu').addEventListener('click', (e) => {
+  e.stopPropagation();
+  const it = e.target.closest('.mm-item');
+  if (!it) return;
+  Voice.setMicDevice(it.dataset.dev).then((s) => {
+    if (s) { pitchReset(); Pitch.start(s); }        // 음정 분석기도 새 마이크로
+    renderMicList();
+    toast('🎙 ' + (Voice.activeMicName() || Voice.shortMicName(it.querySelector('.mm-name').textContent)) + ' 으로 바꿨습니다', 2400);
+  }).catch(() => { toast('그 마이크를 열지 못했습니다.', 3600); renderMicList(); });
+});
+document.addEventListener('click', (e) => {
+  if (micMenuOpen() && !e.target.closest('#micMenu, button.mysel')) setMicMenu(false);
+});
+if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+  navigator.mediaDevices.addEventListener('devicechange', () => { if (micMenuOpen()) renderMicList(); });
 }
 
 /* 음정 게임모드 — 노래방 안에서만, 방장만 */
@@ -975,6 +1067,21 @@ const PENCIL =
   '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>' +
   '</svg>';
 
+/* 참여자 줄의 마이크 아이콘 — 켬 / 끔 / 방장이 음소거(빗금) */
+const MIC_SVG =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+  'stroke-linecap="round" stroke-linejoin="round">' +
+  '<path d="M12 2.5a3 3 0 0 1 3 3v5.5a3 3 0 0 1-6 0V5.5a3 3 0 0 1 3-3Z"/>' +
+  '<path d="M5.5 10.5v.5a6.5 6.5 0 0 0 13 0v-.5"/><path d="M12 17.5V21"/>' +
+  '</svg>';
+const MIC_MUTED_SVG =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+  'stroke-linecap="round" stroke-linejoin="round">' +
+  '<path d="M15 9.3V5.5a3 3 0 0 0-5.8-1"/><path d="M9 9v2a3 3 0 0 0 5.1 2.1"/>' +
+  '<path d="M18.5 10.5v.5a6.4 6.4 0 0 1-.9 3.3"/><path d="M5.5 10.5v.5a6.5 6.5 0 0 0 10.6 5"/>' +
+  '<path d="M12 17.5V21"/><path d="m3 3 18 18"/>' +
+  '</svg>';
+
 const HEADSET =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
   'stroke-linecap="round" stroke-linejoin="round">' +
@@ -1005,17 +1112,71 @@ function paintTalking(dt) {
   }
 }
 
-/* 이 사람 소리만 내 쪽에서 막는다 — 서버를 거치지 않으므로 상대는 모른다 */
-function toggleBlock(id) {
-  if (id === myId) return;
+/* ---- 사람별 소리 크기 · 차단 -------------------------------------
+ *  헤드셋을 누르면 작은 창이 뜬다. 서버를 거치지 않으므로 상대는 모르고,
+ *  내 귀에만 적용된다. 창은 pmenu 처럼 목록 바깥에 하나만 두고 옮겨 띄운다.
+ * ------------------------------------------------------------------ */
+const volPop = $('volPop');
+let volPopId = -1;
+
+function closeVolPop() {
+  if (volPopId < 0) return;
+  volPopId = -1;
+  volPop.hidden = true;
+}
+
+function syncVolPop() {
+  const id = volPopId;
+  const off = Voice.isBlocked(id);
+  const pct = Math.round(Voice.getVolume(id) * 100);
+  $('vpVol').value = pct;
+  $('vpPct').textContent = pct + '%';
+  $('vpBlock').textContent = off ? '차단 풀기' : '소리 차단';
+  $('vpBlock').classList.toggle('on', off);
+  volPop.classList.toggle('blocked', off);
+}
+
+function openVolPop(id, anchor) {
+  const p = peopleCache.find((x) => x.id === id);
+  if (!p || id === myId) return;
+  volPopId = id;
+  $('vpName').textContent = p.name || '익명';
+  syncVolPop();
+  volPop.hidden = false;
+  const r = anchor.getBoundingClientRect();
+  const mw = volPop.offsetWidth, mh = volPop.offsetHeight;
+  let left = r.right - mw, top = r.bottom + 6;
+  if (left < 8) left = 8;
+  if (left + mw > innerWidth - 8) left = innerWidth - 8 - mw;
+  if (top + mh > innerHeight - 8) top = Math.max(8, r.top - 6 - mh);
+  volPop.style.left = left + 'px';
+  volPop.style.top = top + 'px';
+}
+
+function refreshPeopleIcons() { peopleSig = ''; renderPeople(); }
+
+$('vpVol').addEventListener('input', () => {
+  if (volPopId < 0) return;
+  Voice.setVolume(volPopId, $('vpVol').value / 100);
+  $('vpPct').textContent = $('vpVol').value + '%';
+});
+$('vpVol').addEventListener('change', () => { const id = volPopId; refreshPeopleIcons(); if (id >= 0) volPopId = id; });
+$('vpBlock').addEventListener('click', () => {
+  const id = volPopId;
+  if (id < 0) return;
   const p = peopleCache.find((x) => x.id === id);
   const on = !Voice.isBlocked(id);
   Voice.setBlocked(id, on);
   toast((p ? p.name : '이 사람') +
     (on ? ' 님의 소리를 차단했습니다 (나에게만 적용)' : ' 님의 소리를 다시 듣습니다.'), 2800);
-  peopleSig = '';
-  renderPeople();
-}
+  syncVolPop();
+  refreshPeopleIcons();
+  volPopId = id;
+});
+volPop.addEventListener('click', (e) => e.stopPropagation());
+document.addEventListener('click', (e) => {
+  if (volPopId >= 0 && !e.target.closest('#volPop, button.pblk')) closeVolPop();
+});
 
 let peopleSig = '';
 function renderPeople() {
@@ -1024,7 +1185,8 @@ function renderPeople() {
   // 명단·역할이 실제로 바뀐 경우에만 DOM 을 다시 만든다.
   // (위치 브로드캐스트가 10Hz 로 들어와 매번 다시 그리면 커서 밑 버튼이 깜빡인다)
   const sig = JSON.stringify([
-    peopleCache.map((p) => [p.id, p.name, p.gone ? 1 : 0]),
+    peopleCache.map((p) => [p.id, p.name, p.gone ? 1 : 0, p.mic ? 1 : 0]),
+    karaoke,
     room && room.hostId, coHosts, isHost, myId
   ]);
   if (sig === peopleSig) return;
@@ -1044,17 +1206,24 @@ function renderPeople() {
       (p.gone ? '<span class="badge gone">연결 끊김</span>' : '');
     const mine = p.id === myId;
     // 노래방일 때만 마이크 상태를 보여 준다
-    const mic = karaoke
-      ? '<span class="micst ' + (p.mmute ? 'lock' : (p.mic ? 'on' : 'off')) + '" title="' +
-        (p.mmute ? '방장이 껐음' : (p.mic ? '마이크 켬' : '마이크 끔')) + '">🎤</span>'
-      : '';
+    // 마이크 아이콘 — 켬(분홍 마이크) · 끔(빗금 마이크).
+    // 내 줄에서만 버튼이다: 누르면 음소거 · 마이크 고르기 창이 뜬다. 남의 마이크는 건드릴 수 없다.
+    const micCls = 'micst ' + (p.mic ? 'on' : 'off');
+    const micIc = p.mic ? MIC_SVG : MIC_MUTED_SVG;
+    const state = p.mic ? '마이크 켬' : '음소거';
+    const mic = !karaoke ? ''
+      : mine
+        ? '<button class="' + micCls + ' mysel' + (micMenuOpen() ? ' open' : '') + '" title="' + state +
+          ' — 눌러서 음소거 · 마이크 고르기" aria-label="내 마이크">' + micIc + '</button>'
+        : '<span class="' + micCls + '" title="' + state + '">' + micIc + '</span>';
     // 소리 차단 — 헤드셋 버튼 하나로 켜고 끈다. 내 귀에만 적용되므로 누구나 누른다.
     // 노래방 모드일 때만 보인다 — 평소에는 들을 소리 자체가 없다.
     const off = !mine && Voice.isBlocked(p.id);
+    const vol = mine ? Voice.DEFAULT_VOLUME : Voice.getVolume(p.id);
     const blk = (mine || !karaoke) ? ''
-      : '<button class="pblk' + (off ? ' off' : '') + '" data-blk="' + p.id + '" title="' +
-        (off ? '소리 차단 중 — 누르면 다시 들립니다' : '이 사람 소리 차단 (나에게만 적용)') +
-        '" aria-label="소리 차단">' + HEADSET + '</button>';
+      : '<button class="pblk' + (off ? ' off' : (vol !== Voice.DEFAULT_VOLUME ? ' quiet' : '')) + '" data-blk="' + p.id + '" title="' +
+        (off ? '소리 차단 중' : '소리 크기 ' + Math.round(vol * 100) + '%') +
+        ' — 눌러서 조절 (나에게만 적용)" aria-label="소리 크기">' + HEADSET + '</button>';
     // 내 줄에는 ✎ (이름 바꾸기), 남의 줄에는 방장만 쓰는 ⋯ (관리)
     const acts = mine
       ? '<button class="pedit" title="이름 바꾸기" aria-label="이름 바꾸기">' + PENCIL + '</button>'
@@ -1090,13 +1259,8 @@ function openPMenu(id, anchor) {
   const targetIsHost = !!(room && room.hostId === id);
   pmenuId = id;
 
-  // 소리 차단은 줄에 붙은 헤드셋이 맡는다 — 여기는 방장 권한만 모은다
+  // 소리 차단은 줄에 붙은 헤드셋이, 마이크 끄기는 줄에 붙은 🎤 가 맡는다 — 여기는 방장 권한만 모은다
   const rows = [];
-  if (karaoke) {
-    rows.push('<button class="pmi" data-act="micmute" data-on="' + (p.mmute ? '0' : '1') + '">' +
-      (p.mmute ? '마이크 잠금 해제' : '마이크 끄기') + '</button>');
-    rows.push('<div class="sep"></div>');
-  }
   if (!targetIsHost) {
     rows.push('<button class="pmi" data-act="cohost" data-on="' + (isCo ? '0' : '1') + '">' +
       (isCo ? '부방장 해제' : '부방장 지정') + '</button>');
@@ -1162,14 +1326,29 @@ function startRename(btn) {
 $('peopleList').addEventListener('click', (e) => {
   const ed = e.target.closest('button.pedit');
   if (ed) { e.stopPropagation(); startRename(ed); return; }
+  const ms = e.target.closest('button.mysel');
+  if (ms) {
+    e.stopPropagation();
+    closePMenu(); closeVolPop();
+    setMicMenu(!micMenuOpen(), ms);
+    return;
+  }
   const bl = e.target.closest('button.pblk');
-  if (bl) { e.stopPropagation(); toggleBlock(+bl.dataset.blk); return; }
+  if (bl) {
+    e.stopPropagation();
+    const id = +bl.dataset.blk;
+    if (volPopId === id) { closeVolPop(); return; }   // 같은 헤드셋을 다시 누르면 닫는다
+    closePMenu();
+    openVolPop(id, bl);
+    return;
+  }
   const b = e.target.closest('button.pmore');
   if (!b) return;
   e.stopPropagation();
   const id = +b.dataset.more;
   if (pmenuId === id) { closePMenu(); return; }    // 같은 버튼을 다시 누르면 닫는다
   closePMenu();
+  closeVolPop();
   openPMenu(id, b);
 });
 
@@ -1185,11 +1364,6 @@ pmenu.addEventListener('click', (e) => {
   if (id < 0) return;
 
   if (!isHost) return;
-  if (act === 'micmute') {
-    send({ t: 'micmute', id: id, on: b.dataset.on === '1' });
-    return;
-  }
-
   if (b.dataset.act === 'makehost') {
     if (confirm(who + ' 님에게 방장을 넘기시겠습니까?')) send({ t: 'makehost', id: id });
   } else if (b.dataset.act === 'cohost') {
@@ -1224,6 +1398,7 @@ $('plTipX').addEventListener('click', (e) => {
 
 function applyHostUI() {
   const ctl = canCtl();
+  applyBarDefault();
   $('hostCtl').hidden = !ctl;
   $('guestNote').hidden = ctl;
   $('playlistBtn').hidden = !ctl;
@@ -1799,12 +1974,12 @@ function updateMuteIcon() {
 volSlider.addEventListener('input', () => {
   const v = +volSlider.value;
   TV.setVol(v);
-  if (v > 0) { lastVol = v; $('unmuteBtn').hidden = true; }
+  if (v > 0) lastVol = v;
   updateMuteIcon();
 });
 muteToggle.addEventListener('click', () => {
   if (+volSlider.value === 0 || TV.isMuted()) {
-    const v = lastVol || 80; volSlider.value = v; TV.setVol(v); $('unmuteBtn').hidden = true;
+    const v = lastVol || 80; volSlider.value = v; TV.setVol(v);
   } else {
     lastVol = +volSlider.value || 80; volSlider.value = 0; TV.setMuted(true);
   }
@@ -1855,7 +2030,8 @@ setInterval(() => {
 TV.init({
   onEnded: () => { if (isHost) send({ t: 'ctrl', op: 'ended' }); },
   onBlocked: (why) => {
-    if (why === 'mute') $('unmuteBtn').hidden = false;
+    // 소리 있는 자동재생이 막혀 음소거로 틀었다 — 오른쪽 위 🔊 로 켜면 된다
+    if (why === 'mute') { updateMuteIcon(); toast('소리가 꺼진 채 재생 중입니다 — 오른쪽 위 🔇 를 눌러 켜세요.', 5000); }
     else toast(why, 5000);
   },
   /* 넘어가기 전에 '왜' 를 남긴다. 조용히 다음 곡으로 가 버리면
@@ -1869,7 +2045,6 @@ TV.init({
     toast(why, 6500);
   }
 });
-$('unmuteBtn').addEventListener('click', () => { TV.unmute(); $('unmuteBtn').hidden = true; });
 
 /* ------------------------------------------------------------------ */
 /* 방 설정                                                              */
@@ -2373,22 +2548,35 @@ function updateDarts(dt) {
 
 /* ---- 상단 컨트롤러 접기 --------------------------------------------
  *  아래쪽 화살표를 누르면 컨트롤러가 위로 빠지고 화살표 줄만 남는다.
- *  재생 중에도 방을 넓게 보고 싶을 때가 있다. 탭에 기억해 둔다.
+ *  재생 중에도 방을 넓게 보고 싶을 때가 있다.
+ *  기본값은 역할을 따른다 — 재생을 조작하지 못하는 참여자는 접힌 채로 시작하고,
+ *  방장·부방장은 펼친 채로 시작한다. 직접 접거나 펴면 그 선택을 탭에 기억해 둔다.
  * ------------------------------------------------------------------ */
-let barMin = (() => {
-  try { return sessionStorage.getItem('weech.bar') === '1'; } catch (e) { return false; }
+const savedBar = (() => {
+  // 예전 'weech.bar' 는 손대지 않아도 들어올 때마다 저장돼 '직접 고른 값' 과 구별이 안 된다 — 새 키만 본다
+  try { sessionStorage.removeItem('weech.bar'); return sessionStorage.getItem('weech.barPick'); } catch (e) { return null; }
 })();
+let barTouched = savedBar === '0' || savedBar === '1';   // 사람이 직접 고른 적이 있나
+let barMin = savedBar === '1';
 
-function setBarMin(min) {
+function setBarMin(min, remember) {
   barMin = min;
   $('playerbar').classList.toggle('min', min);
   // 접으면 노래방 막대·토스트가 빈자리만큼 올라온다
   document.body.classList.toggle('barmin', min);
   $('barToggle').setAttribute('aria-expanded', min ? 'false' : 'true');
-  try { sessionStorage.setItem('weech.bar', min ? '1' : '0'); } catch (e) { /* 무시 */ }
+  if (remember) {
+    barTouched = true;
+    try { sessionStorage.setItem('weech.barPick', min ? '1' : '0'); } catch (e) { /* 무시 */ }
+  }
 }
-$('barToggle').addEventListener('click', (e) => { e.stopPropagation(); setBarMin(!barMin); });
+$('barToggle').addEventListener('click', (e) => { e.stopPropagation(); setBarMin(!barMin, true); });
 setBarMin(barMin);                 // 새로고침해도 접어 둔 상태를 지킨다
+
+/* 역할이 정해지거나 바뀔 때 — 직접 고른 적이 없으면 역할에 맞춰 접고 편다 */
+function applyBarDefault() {
+  if (!barTouched) setBarMin(!canCtl());
+}
 
 /* ------------------------------------------------------------------ */
 /* 시청 모드 (1인칭)                                                     */

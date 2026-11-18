@@ -91,21 +91,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const row = (s.u || []).find((x) => x[0] === jg.you);
   chk(!!row && row[10] === 1, '10Hz 묶음에도 마이크 상태가 실린다');
 
-  /* 방장이 남의 마이크 끄기 */
-  const offSeen = G.waitFor('mic');
+  /* 남의 마이크를 끄는 명령은 없다 — 마이크는 각자 제 것만 */
+  const noMute = G.never('micmute', 700);
   H.send({ t: 'micmute', id: jg.you, on: true });
-  const forced = await offSeen;
-  const mm = await G.waitFor('micmute');
-  chk(forced.id === jg.you && forced.on === false, '방장이 끄면 그 사람 마이크가 바로 내려간다');
-  chk(mm.id === jg.you && mm.on === true, '잠금 사실이 방 전원에게 전파된다');
-
-  G.send({ t: 'mic', on: true });
-  const e2 = await G.waitFor('err');
-  chk(/방장이/.test(e2.msg), '잠긴 사람은 다시 켤 수 없다 → "' + e2.msg + '"');
-
-  G.send({ t: 'micmute', id: jl.you, on: true });
-  const e3 = await G.waitFor('err');
-  chk(/방장만/.test(e3.msg), '방장 아닌 사람은 남의 마이크를 못 끈다');
+  chk((await noMute) === null, '방장도 남의 마이크는 건드릴 수 없다');
 
   /* 연결용 쪽지 중계 */
   const toL = L.waitFor('rtc');
@@ -120,8 +109,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await H.waitFor('mode');
   await sleep(250);
   const s2 = await H.waitFor('s');
-  const anyMic = (s2.u || []).some((x) => x[10] === 1 || x[11] === 1);
-  chk(!anyMic, '노래방을 끄면 모두의 마이크·잠금이 풀린다');
+  const anyMic = (s2.u || []).some((x) => x[10] === 1);
+  chk(!anyMic, '노래방을 끄면 모두의 마이크가 내려간다');
 
   H.send({ t: 'mic', on: true });
   const nope = await H.never('mic', 900);

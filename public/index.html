@@ -229,6 +229,24 @@
     </button>
     <div id="peopleList" hidden></div>
     <div id="pmenu" hidden></div>
+    <div id="micMenu" hidden>
+      <div class="vp-name">내 마이크 <span id="mmState" class="mm-state"></span></div>
+      <button id="mmMute" class="vp-blk">음소거</button>
+      <div class="mm-head">마이크 고르기</div>
+      <div id="micList"></div>
+      <div class="mm-meter"><span class="mm-mlbl">입력</span><div class="mm-track"><div id="micMeterFill"></div></div></div>
+      <div id="micHint" class="mm-hint"></div>
+    </div>
+    <div id="volPop" hidden>
+      <div class="vp-name" id="vpName"></div>
+      <div class="vp-row">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5Z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg>
+        <input id="vpVol" type="range" min="0" max="100" step="1" value="50" aria-label="이 사람 소리 크기" />
+        <span id="vpPct">50%</span>
+      </div>
+      <button id="vpBlock" class="vp-blk">소리 차단</button>
+      <div class="vp-note">내 화면에만 적용됩니다</div>
+    </div>
   </div>
 
   <div id="chat" class="min">
@@ -256,20 +274,10 @@
     <button id="touchJump" title="점프">⤒</button>
   </div>
 
-  <!-- 컨트롤러 바로 아래 한 줄 — 노래방 막대와 소리 켜기가 나란히 선다 -->
+  <!-- 컨트롤러 바로 아래 — 모드 알림 -->
   <div id="topDock">
-  <div id="karaokeBar" hidden>
-    <span class="kb-ic">🪩</span>
-    <span class="kb-t">노래방 모드</span>
-    <button id="micBtn" class="kb-mic" title="내 마이크 켜기 / 끄기">
-      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M12 2a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3Z"/>
-        <path d="M5.5 10.5v.5a6.5 6.5 0 0 0 13 0v-.5"/><path d="M12 17.5V21"/>
-      </svg>
-      <span class="kb-lbl">마이크 켜기</span>
-    </button>
-  </div>
-  <button id="unmuteBtn" hidden>🔈 소리 켜기</button>
+  <!-- 모드를 바꾸면 5초 동안 떴다가 흐려지며 사라진다 -->
+  <div id="modePill" hidden><span class="mp-ic" id="mpIc">🪩</span><span class="mp-t" id="mpT">노래방 모드</span></div>
   </div>
 
   <div id="toast" hidden></div>

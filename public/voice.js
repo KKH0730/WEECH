@@ -18,10 +18,28 @@
  * (오프라인에서 쓰려면 이 배열을 비우면 된다 — 같은 망 안에서는 그대로 동작한다) */
 const RTC_CONF = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
-const MIC_CONSTRAINTS = {
-  audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-  video: false
-};
+/* 어느 마이크를 쓸지 — 이 브라우저에만 기억한다 (비어 있으면 시스템 기본값) */
+const MIC_KEY = 'weech.mic';
+let micDevice = '';
+try { micDevice = localStorage.getItem(MIC_KEY) || ''; } catch (e) { /* 사생활 모드 등 */ }
+
+function micConstraints(dev) {
+  const a = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+  if (dev) a.deviceId = { exact: dev };
+  return { audio: a, video: false };
+}
+
+/* 고른 마이크가 빠져 있으면(헤드셋을 뽑았다 등) 기본값으로 물러선다 */
+function openMic() {
+  return navigator.mediaDevices.getUserMedia(micConstraints(micDevice)).catch((e) => {
+    const n = (e && e.name) || '';
+    if (micDevice && (n === 'OverconstrainedError' || n === 'NotFoundError' || n === 'NotReadableError')) {
+      onNotice('고른 마이크를 찾지 못해 기본 마이크를 씁니다.');
+      return navigator.mediaDevices.getUserMedia(micConstraints(''));
+    }
+    throw e;
+  });
+}
 
 let myId = 0;
 let sendSignal = null;       // (to, data) => void
@@ -32,6 +50,7 @@ let micStream = null;
 
 const peers = new Map();     // id -> { pc, sender, audio, meter }
 const blocked = new Set();   // 내가 소리를 막은 사람
+const helloed = new Set();   // 다시 걸어 달라고 이미 부른 사람 (같은 사람을 거듭 부르지 않게)
 
 /* ---- 말하는 중인가 --------------------------------------------------
  *  들어오는 소리의 세기(RMS)만 본다. 음정까지 볼 필요가 없다.
@@ -122,19 +141,24 @@ const myTrack = () => (micStream ? micStream.getAudioTracks()[0] || null : null)
 
 /* ---- 연결 한 가닥 ------------------------------------------------- */
 
-function makePeer(id) {
+/* 연결마다 이름표(sid)를 붙인다. 상대가 새로고침하면 옛 연결의 쪽지(answer·ice)가
+ * 뒤늦게 도착할 수 있는데, 이름표가 다르면 버린다. */
+const newSid = () => Math.random().toString(36).slice(2, 10);
+
+function makePeer(id, sid) {
   const pc = new RTCPeerConnection(RTC_CONF);
-  const p = { pc: pc, sender: null, audio: null, made: false };
+  const p = { pc: pc, sid: sid, sender: null, audio: null, made: false };
   peers.set(id, p);
 
   pc.onicecandidate = (e) => {
-    if (e.candidate) sendSignal(id, { ice: e.candidate.toJSON() });
+    if (e.candidate && peers.get(id) === p) sendSignal(id, { sid: p.sid, ice: e.candidate.toJSON() });
   };
   pc.ontrack = (e) => {
     const stream = e.streams[0] || new MediaStream([e.track]);
     attachAudio(id, stream);
   };
   pc.onconnectionstatechange = () => {
+    if (peers.get(id) !== p) return;            // 이미 새 연결로 바뀌었다
     if (pc.connectionState === 'failed') {
       // 한 번 끊어졌다 — 다시 맺어 본다 (낮은 id 쪽만 다시 건다)
       dropPeer(id);
@@ -158,6 +182,7 @@ function attachAudio(id, stream) {
   }
   p.audio.srcObject = stream;
   p.audio.muted = blocked.has(id);
+  p.audio.volume = volumeOf(id);
   if (!p.meter) p.meter = makeMeter(stream);     // 말하는지 재는 귀
   const played = p.audio.play();
   if (played && played.catch) {
@@ -171,14 +196,14 @@ function attachAudio(id, stream) {
 /* 낮은 id 쪽이 먼저 건다 — 양쪽이 동시에 걸어 엉키는 일을 없앤다 */
 function connect(id) {
   if (!enabled || id === myId || peers.has(id)) return;
-  const p = makePeer(id);
+  const p = makePeer(id, newSid());
   const tr = p.pc.addTransceiver('audio', { direction: 'sendrecv' });
   p.sender = tr.sender;
   if (myTrack()) p.sender.replaceTrack(myTrack());
   p.pc.createOffer()
     .then((o) => p.pc.setLocalDescription(o))
-    .then(() => sendSignal(id, { sdp: p.pc.localDescription }))
-    .catch(() => dropPeer(id));
+    .then(() => { if (peers.get(id) === p) sendSignal(id, { sid: p.sid, sdp: p.pc.localDescription }); })
+    .catch(() => { if (peers.get(id) === p) dropPeer(id); });
 }
 
 function dropPeer(id) {
@@ -199,30 +224,42 @@ export function signal(from, data) {
   if (!enabled || !data) return;
   let p = peers.get(from);
 
+  /* 상대(나보다 높은 id)가 새로 들어왔거나 새로고침했다 — 다시 걸어 달란다.
+   * 내 쪽에 남은 옛 연결은 이미 죽은 것이므로 버리고 새로 건다. */
+  if (data.hello) {
+    if (myId < from) { dropPeer(from); connect(from); }
+    return;
+  }
+
   if (data.sdp) {
     const desc = data.sdp;
     if (desc.type === 'offer') {
-      if (!p) p = makePeer(from);
+      // 재협상은 하지 않으므로 offer 는 언제나 '새 연결' 이다 — 옛것은 버린다
+      if (p) dropPeer(from);
+      p = makePeer(from, data.sid);
+      const cur = p;
       p.pc.setRemoteDescription(desc)
         .then(() => {
           // 상대가 만들어 준 자리에 내 트랙을 끼운다
           const tr = p.pc.getTransceivers()[0];
           if (tr) {
+            // 받는 쪽 자리는 기본이 'recvonly' 라 그대로 두면 이쪽 목소리가 영영 안 간다
+            tr.direction = 'sendrecv';
             p.sender = tr.sender;
             if (myTrack()) p.sender.replaceTrack(myTrack());
           }
           return p.pc.createAnswer();
         })
         .then((a) => p.pc.setLocalDescription(a))
-        .then(() => sendSignal(from, { sdp: p.pc.localDescription }))
-        .catch(() => dropPeer(from));
-    } else if (desc.type === 'answer' && p) {
-      p.pc.setRemoteDescription(desc).catch(() => dropPeer(from));
+        .then(() => { if (peers.get(from) === cur) sendSignal(from, { sid: cur.sid, sdp: cur.pc.localDescription }); })
+        .catch(() => { if (peers.get(from) === cur) dropPeer(from); });
+    } else if (desc.type === 'answer' && p && p.sid === data.sid) {
+      p.pc.setRemoteDescription(desc).catch(() => { if (peers.get(from) === p) dropPeer(from); });
     }
     return;
   }
 
-  if (data.ice && p) {
+  if (data.ice && p && p.sid === data.sid) {
     p.pc.addIceCandidate(data.ice).catch(() => { /* 늦게 온 후보는 버린다 */ });
   }
 }
@@ -234,8 +271,12 @@ export function setPeers(ids) {
   if (!enabled) return;
   const want = new Set(ids.filter((id) => id !== myId));
   for (const id of Array.from(peers.keys())) if (!want.has(id)) dropPeer(id);
-  for (const id of want) if (myId < id) connect(id);
-  // 나보다 낮은 id 는 그쪽이 걸어 온다 — 여기서는 기다린다
+  for (const id of want) {
+    if (myId < id) connect(id);
+    // 나보다 낮은 id 는 그쪽이 걸어 온다. 다만 내가 새로고침했다면 그쪽은 옛 연결이
+    // 아직 살아 있다고 믿고 다시 걸지 않으므로, 연결이 없을 때 한 번 불러 준다.
+    else if (!peers.has(id) && !helloed.has(id)) { helloed.add(id); sendSignal(id, { hello: 1 }); }
+  }
 }
 
 /* 노래방 모드 켜기/끄기 */
@@ -248,10 +289,12 @@ export function setEnabled(on, ids) {
     try { setPeers(ids || []); }
     catch (e) { onNotice('목소리 연결을 시작하지 못했습니다: ' + ((e && e.message) || e)); }
   } else {
+    helloed.clear();
     for (const id of Array.from(peers.keys())) dropPeer(id);
     stopMic();
     micWanted = false;
     if (meterCtx) { try { meterCtx.close(); } catch (e) { /* 무시 */ } meterCtx = null; }
+    myMeter = null; myMeterFor = null;
   }
 }
 
@@ -276,7 +319,8 @@ export function setMic(on) {
   if (!micAvailable()) { onNotice(micUnavailableReason()); micWanted = false; return Promise.resolve(false); }
   if (micStream) { pushTrack(); return Promise.resolve(true); }
 
-  return navigator.mediaDevices.getUserMedia(MIC_CONSTRAINTS)
+  return openMic()
+    .then(preferHeadset)
     .then((s) => {
       if (!micWanted || !enabled) { s.getTracks().forEach((t) => t.stop()); return false; }
       micStream = s;
@@ -302,10 +346,28 @@ function pushTrack() {
 export function setBlocked(id, on) {
   id = id | 0;
   if (on) blocked.add(id); else blocked.delete(id);
+  applyMute(id);
+}
+
+function applyMute(id) {
   const p = peers.get(id);
-  if (p && p.audio) p.audio.muted = !!on;
+  if (p && p.audio) p.audio.muted = blocked.has(id);
 }
 export function isBlocked(id) { return blocked.has(id | 0); }
+
+/* 이 사람 소리 크기(0~1) — 역시 내 귀에만 적용된다. 다시 연결돼도 유지된다.
+ * 기본은 절반 — 영상 소리와 섞여도 목소리가 너무 튀지 않게. */
+export const DEFAULT_VOLUME = 0.5;
+const volumes = new Map();
+function volumeOf(id) { const v = volumes.get(id | 0); return v === undefined ? DEFAULT_VOLUME : v; }
+export function setVolume(id, v) {
+  id = id | 0;
+  v = Math.max(0, Math.min(1, Number(v) || 0));
+  if (v === DEFAULT_VOLUME) volumes.delete(id); else volumes.set(id, v);
+  const p = peers.get(id);
+  if (p && p.audio) p.audio.volume = v;
+}
+export const getVolume = (id) => volumeOf(id);
 export function blockedList() { return Array.from(blocked); }
 
 /* 음정 분석기가 같은 스트림을 물어 갈 수 있게 내준다 */
@@ -313,3 +375,94 @@ export const micMedia = () => micStream;
 
 export const isEnabled = () => enabled;
 export const isMicOn = () => !!(micStream && micWanted);
+
+
+/* ---- 마이크 고르기 ------------------------------------------------- */
+
+/* 헤드셋처럼 보이는 마이크인가 — 이름으로만 가린다 */
+const HEADSET_RE = /headset|헤드셋|headphone|헤드폰|earbud|airpods|buds|hands-?free|핸즈프리|bluetooth|블루투스/i;
+
+/* 마이크를 직접 고른 적이 없으면 헤드셋을 먼저 잡는다.
+ * 브라우저가 사이트마다 기억해 둔 마이크가 아무것도 안 꽂힌 본체 단자일 때가 있어,
+ * 그대로 두면 연결은 되는데 무음만 간다. 헤드셋이 있으면 그쪽이 거의 늘 맞다.
+ * 이름(label)은 권한을 받은 뒤에만 보이므로, 일단 연 다음에 확인하고 갈아 끼운다.
+ * 자동으로 고른 것은 저장하지 않는다 — 사람이 고른 것만 기억한다. */
+function preferHeadset(stream) {
+  if (micDevice || !navigator.mediaDevices.enumerateDevices) return stream;
+  const cur = stream.getAudioTracks()[0];
+  if (!cur || HEADSET_RE.test(cur.label)) return stream;
+  return navigator.mediaDevices.enumerateDevices().then((ds) => {
+    const hs = ds.find((d) => d.kind === 'audioinput' && d.deviceId !== 'default' &&
+      d.deviceId !== 'communications' && HEADSET_RE.test(d.label));
+    if (!hs) return stream;
+    return navigator.mediaDevices.getUserMedia(micConstraints(hs.deviceId)).then((s2) => {
+      stream.getTracks().forEach((t) => t.stop());
+      return s2;
+    }, () => stream);                               // 헤드셋을 못 열면 처음 것을 그대로 쓴다
+  }, () => stream);
+}
+
+/* 사람에게 보여 줄 짧은 이름 — '기본값 - 마이크(Logitech G733 Gaming Headset) (046d:0b1f)'
+ * 같은 윈도 이름에서 군더더기를 걷어 낸다. */
+export function shortMicName(label) {
+  let n = String(label || '').trim();
+  n = n.replace(/^(기본값|default|커뮤니케이션|communications)\s*-\s*/i, '');
+  n = n.replace(/\s*\([0-9a-f]{4}:[0-9a-f]{4}\)\s*$/i, '');
+  const m = n.match(/^(?:마이크|microphone|mic)\s*\((.+)\)$/i);
+  if (m) n = m[1];
+  return n || '마이크';
+}
+
+/* 지금 실제로 쓰고 있는 마이크 이름 (꺼져 있으면 빈 문자열) */
+export const activeMicName = () => { const t = myTrack(); return t ? shortMicName(t.label) : ''; };
+
+/* 고를 수 있는 마이크 목록. 이름(label)은 마이크 권한을 받은 뒤에만 보인다.
+ * 'default' · 'communications' 는 윈도가 만드는 별칭(실제 장치와 같은 것)이라 목록만 어지럽혀 뺀다. */
+export function listMics() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return Promise.resolve([]);
+  return navigator.mediaDevices.enumerateDevices().then((ds) => ds
+    .filter((d) => d.kind === 'audioinput' && d.deviceId !== 'communications' && d.deviceId !== 'default')
+    .map((d) => ({ id: d.deviceId, label: d.label, group: d.groupId })));
+}
+
+/* 지금 쓰는 마이크 — 켜져 있으면 실제 장치, 꺼져 있으면 골라 둔 것 */
+export function currentMic() {
+  const t = myTrack();
+  if (t) {
+    const st = t.getSettings ? t.getSettings() : {};
+    return { id: micDevice || st.deviceId || '', group: st.groupId || '', label: t.label || '' };
+  }
+  return { id: micDevice, group: '', label: '' };
+}
+
+/* 마이크를 바꾼다. 켜져 있으면 그 자리에서 갈아 끼운다(상대와 다시 협상하지 않는다).
+ * 새 스트림을 돌려준다 — 음정 분석기도 갈아 물려야 하므로. 꺼져 있으면 null. */
+export function setMicDevice(id) {
+  micDevice = id || '';
+  try { if (micDevice) localStorage.setItem(MIC_KEY, micDevice); else localStorage.removeItem(MIC_KEY); } catch (e) { /* 무시 */ }
+  if (!micStream) return Promise.resolve(null);
+  return openMic().then((s) => {
+    if (!micStream || !micWanted) { s.getTracks().forEach((t) => t.stop()); return null; }
+    const old = micStream;
+    micStream = s;
+    pushTrack();
+    old.getTracks().forEach((t) => { try { t.stop(); } catch (e) { /* 무시 */ } });
+    return s;
+  });
+}
+
+/* 내 마이크 소리 크기(0~1) — 고른 마이크로 소리가 들어오는지 눈으로 확인하게 */
+let myMeter = null, myMeterFor = null;
+export function micLevel() {
+  if (!micStream) return 0;
+  if (myMeterFor !== micStream) {
+    if (myMeter) { try { myMeter.src.disconnect(); } catch (e) { /* 무시 */ } }
+    myMeter = makeMeter(micStream);
+    myMeterFor = micStream;
+  }
+  if (!myMeter) return 0;
+  myMeter.an.getFloatTimeDomainData(myMeter.buf);
+  let e = 0;
+  for (let i = 0; i < myMeter.buf.length; i++) e += myMeter.buf[i] * myMeter.buf[i];
+  return Math.min(1, Math.sqrt(e / myMeter.buf.length) * 4);
+}
