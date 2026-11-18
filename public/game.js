@@ -214,7 +214,7 @@ function renderRooms() {
     b.innerHTML =
       '<div class="rt"><div class="rname">' + esc(r.title) + '</div>' +
       '<div class="rsub">' + (r.playing ? '<span class="live">재생중</span> ' : '') +
-      esc(r.now || ('영상 ' + r.count + '개')) + ' · 방장 ' + esc(r.host) + '</div></div>' +
+      esc(r.now || (r.count ? '영상 ' + r.count + '개' : '재생목록 비어 있음')) + ' · 방장 ' + esc(r.host) + '</div></div>' +
       '<div class="rn">' + r.n + '/' + r.cap + '</div>';
     b.addEventListener('click', () => joinRoom(r.code));
     box.appendChild(b);
@@ -238,7 +238,8 @@ function countLinks(text) {
 const countIds = (t) => { const c = countLinks(t); return c.v + c.p; };
 function linkLabel(text) {
   const c = countLinks(text);
-  if (!c.v && !c.p) return '인식된 영상 0개';
+  if (!String(text || '').trim()) return '비워 두면 빈 방으로 시작합니다';
+  if (!c.v && !c.p) return '알아보지 못한 링크입니다';
   const parts = [];
   if (c.p) parts.push('재생목록 ' + c.p + '개');
   if (c.v) parts.push('영상 ' + c.v + '개');
@@ -246,6 +247,7 @@ function linkLabel(text) {
 }
 
 $('newLinks').addEventListener('input', () => { $('linkCount').textContent = linkLabel($('newLinks').value); });
+$('linkCount').textContent = linkLabel('');
 
 function setCreating(on, msg) {
   creating = on;
@@ -258,7 +260,9 @@ function lobbyErr(msg) { const el = $('lobbyErr'); el.textContent = msg; el.hidd
 $('createBtn').addEventListener('click', () => {
   const title = $('newTitle').value.trim();
   const links = $('newLinks').value.trim();
-  if (!links || !countIds(links)) { lobbyErr('유튜브 링크를 하나 이상 넣어 주세요.'); return; }
+  // 링크는 없어도 된다 — 빈 방으로 열고 들어가서 채우면 된다.
+  // 다만 뭔가 적었는데 알아보지 못했다면 그건 짚어 준다.
+  if (links && !countIds(links)) { lobbyErr('유튜브 링크를 알아보지 못했습니다. 비워 두면 빈 방으로 시작합니다.'); return; }
   if (creating) return;
   $('lobbyErr').hidden = true;
   setCreating(true, '방을 만드는 중…');
@@ -814,6 +818,11 @@ function enterRoom() {
   drawBoard();
   logMsg('<b>' + esc(me.name) + '</b> 님으로 들어왔습니다. 이름은 왼쪽 <b>참여자</b> 목록에서 바꿀 수 있습니다.', 'sys');
   logMsg('<b>Space</b> 점프 · <b>V</b> 시청 모드 · <b>?</b> 전체 조작.', 'sys');
+  if (room && (!room.playlist || !room.playlist.length)) {
+    logMsg(canCtl()
+      ? '재생목록이 비어 있습니다 — 아래 <b>☰</b> 로 유튜브 링크를 넣어 주세요.'
+      : '재생목록이 비어 있습니다 — 방장이 채우기를 기다리는 중입니다.', 'sys');
+  }
 }
 
 function leaveToLobby() {

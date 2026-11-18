@@ -750,18 +750,11 @@ function handleMessage(entry, m, now) {
     const name = clean(m.name, 12) || randomName(null);
     const title = clean(m.title, 40) || (name + '의 방');
     const refs = parseLinks(m.links);
-    if (!refs.length) { conn.send({ t: 'err', msg: '유튜브 링크를 하나 이상 넣어 주세요.' }); return; }
 
-    const hasList = refs.some((r) => r.kind === 'list');
-    if (hasList) conn.send({ t: 'busy', msg: '재생목록을 펼치는 중…' });
-
-    resolveLinks(m.links).then((res) => {
+    /* 실제로 방을 세우는 부분. 링크가 없으면 빈 방으로 바로, 있으면 펼친 뒤에. */
+    const build = (res) => {
       if (!conn.alive) return;
       if (entry.user && entry.user.room) return;          // 그 사이 다른 방에 들어갔으면 무시
-      if (!res.items.length) {
-        conn.send({ t: 'err', msg: '재생목록에서 영상을 찾지 못했습니다. 공개 재생목록인지 확인해 주세요.' });
-        return;
-      }
       if (rooms.size >= MAX_ROOMS) { conn.send({ t: 'err', msg: '방이 너무 많습니다.' }); return; }
       const code = makeCode();
       if (!code) { conn.send({ t: 'err', msg: '방 코드를 만들지 못했습니다.' }); return; }
@@ -769,7 +762,7 @@ function handleMessage(entry, m, now) {
       const room = {
         code: code, title: title, hostId: 0, coHosts: new Set(), createdAt: Date.now(),
         kicked: new Map(),               // 재입장 토큰 -> 언제까지 막을지
-        playlist: res.items,
+        playlist: res.items,             // 비어 있어도 된다 — 들어가서 채우면 그만이다
         idx: 0, playing: false, position: 0, updatedAt: Date.now(),
         mode: 'cinema',                  // Play 모드 — 'cinema' | 'karaoke' (방장만 바꾼다)
         pgame: false,                    // 음정 게임모드 (노래방 안에서만 켤 수 있다)
@@ -785,6 +778,30 @@ function handleMessage(entry, m, now) {
       hydrateTitles(room);
       pushLobby();
       console.log('  방 생성 [' + code + '] ' + title + ' / ' + res.items.length + '곡 / 방장 ' + name);
+    };
+
+    /* 링크를 '안 넣은 것' 과 '넣었는데 못 알아들은 것' 은 다르다.
+     * 앞은 빈 방으로 열어 주고, 뒤는 알려 줘야 한다 — 안 그러면 적은 것이 조용히 사라진다. */
+    if (!refs.length) {
+      const typed = (typeof m.links === 'string') && m.links.trim();
+      if (typed) {
+        conn.send({ t: 'err', msg: '유튜브 링크를 알아보지 못했습니다. 비워 두면 빈 방으로 시작합니다.' });
+        return;
+      }
+      build({ items: [], truncated: false, mixes: 0, failed: 0 });
+      return;
+    }
+
+    if (refs.some((r) => r.kind === 'list')) conn.send({ t: 'busy', msg: '재생목록을 펼치는 중…' });
+
+    resolveLinks(m.links).then((res) => {
+      if (!conn.alive) return;
+      // 링크를 넣었는데 한 곡도 못 건졌다면 그건 알려 줘야 한다
+      if (!res.items.length) {
+        conn.send({ t: 'err', msg: '재생목록에서 영상을 찾지 못했습니다. 공개 재생목록인지 확인해 주세요.' });
+        return;
+      }
+      build(res);
     });
     return;
   }
@@ -992,6 +1009,8 @@ function handleMessage(entry, m, now) {
     case 'ctrl': {
       if (!canCtl) { conn.send({ t: 'err', msg: '방장·부방장만 재생을 조작할 수 있습니다.' }); return; }
       const op = String(m.op || '');
+      // 빈 재생목록에서는 재생을 켜 봐야 틀 것이 없다
+      if (!room.playlist.length) return;
       if (op === 'play') setPlayback(room, { playing: true, position: clampNum(m.v, 0, 86400) });
       else if (op === 'pause') setPlayback(room, { playing: false, position: clampNum(m.v, 0, 86400) });
       else if (op === 'seek') setPlayback(room, { position: clampNum(m.v, 0, 86400) });
