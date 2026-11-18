@@ -4,7 +4,8 @@
   "description": "위치(WEECH) — 유튜브를 같이 보는 3D 라운지",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node test/run.js"
   },
   "license": "MIT",
   "dependencies": {
