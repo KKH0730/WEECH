@@ -54,6 +54,23 @@ let screen = 'lobby';
 let ws = null, retry = null, myId = 0;
 const outbox = [];
 let lastJoin = null;
+let rejoining = false;      // 새로고침 직후 자동 복구 중인가
+
+/* 방 코드·닉네임·재입장 토큰을 탭에 묶어 둔다.
+ * sessionStorage 라 탭을 닫으면 사라지고, 다른 탭에 새어 나가지도 않는다. */
+const SKEY = 'weech.seat';
+function saveSeat(v) {
+  try { sessionStorage.setItem(SKEY, JSON.stringify(v)); } catch (e) { /* 사생활 모드 등 */ }
+}
+function loadSeat() {
+  try {
+    const v = JSON.parse(sessionStorage.getItem(SKEY) || 'null');
+    return (v && v.code && v.token) ? v : null;
+  } catch (e) { return null; }
+}
+function clearSeat() {
+  try { sessionStorage.removeItem(SKEY); } catch (e) { /* 무시 */ }
+}
 
 const me = {
   id: 0, name: '', x: R.spawn.x, z: R.spawn.z, dir: Math.PI, st: 0,
@@ -263,7 +280,17 @@ function connect() {
     clearTimeout(retry);
     while (outbox.length) ws.send(JSON.stringify(outbox.shift()));
     if (screen === 'room' && lastJoin) {
-      ws.send(JSON.stringify({ t: 'join', code: lastJoin.code, name: lastJoin.name }));
+      // 소켓만 끊겼던 경우 — 토큰이 있으면 원래 자리로 돌아간다
+      ws.send(JSON.stringify({ t: 'join', code: lastJoin.code, name: lastJoin.name, token: lastJoin.token }));
+      return;
+    }
+    const seat = loadSeat();
+    if (screen === 'lobby' && seat) {
+      // 새로고침 직후 — 로비를 거치지 않고 있던 방으로 돌아간다
+      rejoining = true;
+      me.name = seat.name;
+      lastJoin = seat;
+      ws.send(JSON.stringify({ t: 'join', code: seat.code, name: seat.name, token: seat.token }));
     }
   };
   ws.onclose = () => { if (screen === 'room') toast('연결이 끊어졌습니다. 다시 잇는 중…', 4000); scheduleRetry(); };
@@ -287,6 +314,15 @@ function connect() {
 
       case 'err':
         setCreating(false);
+        if (m.stale) {
+          // 있던 자리가 사라졌다 — 보관해 둔 좌석을 버리고 로비로
+          clearSeat();
+          lastJoin = null;
+          rejoining = false;
+          if (screen === 'room') leaveToLobby();
+          lobbyErr(m.msg + ' 로비에서 다시 들어와 주세요.');
+          break;
+        }
         if (screen === 'lobby') lobbyErr(m.msg); else toast(m.msg, 3000);
         break;
 
@@ -296,7 +332,9 @@ function connect() {
         room = m.room;
         isHost = (m.host === myId);
         coHosts = (room && room.coHosts) || [];
-        lastJoin = { code: room.code, name: me.name };
+        rejoining = false;
+        lastJoin = { code: room.code, name: me.name, token: m.token || (lastJoin && lastJoin.token) };
+        saveSeat(lastJoin);
         clearAvatars();
         (m.users || []).forEach((u) => {
           if (u.id === myId) { me.x = u.x / 100; me.z = u.y / 100; return; }
@@ -320,9 +358,11 @@ function connect() {
           g.ty = (a[6] || 0) / 100;
           g.hy = a[7] || 0; g.hp = a[8] || 0;        // 고개 각도 (시선)
           if (a[5] && a[5] !== g.name) { g.name = a[5]; g.av.setName(a[5]); }
+          const gone = !!a[9];
+          if (g.gone !== gone) { g.gone = gone; g.av.setGone(gone); }
         });
         for (const id of Array.from(others.keys())) if (!seen.has(id)) removeOther(id);
-        peopleCache = (m.u || []).map((a) => ({ id: a[0], name: a[5] }));
+        peopleCache = (m.u || []).map((a) => ({ id: a[0], name: a[5], gone: !!a[9] }));
         peopleCache.sort((a, b) => (b.id === myId) - (a.id === myId) || a.id - b.id);
         $('roomPeople').textContent = peopleCache.length || 1;
         renderPeople();
@@ -338,6 +378,17 @@ function connect() {
         removeOther(m.id);
         logMsg(esc(m.name || '누군가') + ' 님이 나갔습니다.', 'sys');
         break;
+
+      case 'gone': {
+        const g = others.get(m.id);
+        if (g) { g.gone = !!m.on; g.av.setGone(m.on); }
+        logMsg(esc(m.name || '누군가') + (m.on
+          ? ' 님의 연결이 끊어졌습니다. 잠시 자리를 비워 둡니다.'
+          : ' 님이 돌아왔습니다.'), 'sys');
+        peopleSig = '';                    // 명단을 다시 그리게 한다
+        renderPeople();
+        break;
+      }
 
       case 'host':
         isHost = (m.id === myId);
@@ -407,8 +458,9 @@ function addOther(u) {
   const av = makeAvatar({ name: u.name, seed: u.id, isMe: false });
   scene.add(av.root);
   av.hitMeshes.forEach((mesh) => hitToPlayer.set(mesh.uuid, u.id));
+  if (u.gone) av.setGone(true);
   const g = {
-    id: u.id, name: u.name || '익명',
+    id: u.id, name: u.name || '익명', gone: !!u.gone,
     x: u.x / 100, z: u.y / 100, tx: u.x / 100, tz: u.y / 100,
     dir: Math.PI, tdir: Math.PI, st: 0, y: 0, ty: 0, av: av
   };
@@ -477,7 +529,7 @@ function leaveToLobby() {
 }
 
 $('leaveBtn').addEventListener('click', () => {
-  if (confirm('방에서 나갈까요?')) send({ t: 'leave' });
+  if (confirm('방에서 나갈까요?')) { clearSeat(); lastJoin = null; send({ t: 'leave' }); }
 });
 
 /* 클립보드 — 안 되면 옛 방식으로 */
@@ -539,7 +591,7 @@ function renderPeople() {
   // 명단·역할이 실제로 바뀐 경우에만 DOM 을 다시 만든다.
   // (위치 브로드캐스트가 10Hz 로 들어와 매번 다시 그리면 커서 밑 버튼이 깜빡인다)
   const sig = JSON.stringify([
-    peopleCache.map((p) => [p.id, p.name]),
+    peopleCache.map((p) => [p.id, p.name, p.gone ? 1 : 0]),
     room && room.hostId, coHosts, isHost, myId
   ]);
   if (sig === peopleSig) return;
@@ -554,7 +606,8 @@ function renderPeople() {
     const badges =
       (isP ? '<span class="badge host">방장</span>' : '') +
       (isCo ? '<span class="badge cohost">부방장</span>' : '') +
-      (p.id === myId ? '<span class="badge me">나</span>' : '');
+      (p.id === myId ? '<span class="badge me">나</span>' : '') +
+      (p.gone ? '<span class="badge gone">연결 끊김</span>' : '');
     // 방장 본인만, 자기 자신이 아닌 다른 사람에게 역할 버튼을 보여준다
     let acts = '';
     if (isHost && p.id !== myId && !isP) {
@@ -564,7 +617,7 @@ function renderPeople() {
         '<button class="pbtn" data-act="makehost" data-id="' + p.id + '">방장 넘기기</button>' +
         '</span>';
     }
-    return '<div class="person"><span class="swatch" style="background:#' + c + '"></span>' +
+    return '<div class="person' + (p.gone ? ' isgone' : '') + '"><span class="swatch" style="background:#' + c + '"></span>' +
            '<span class="nm">' + esc(p.name || '익명') + '</span>' + badges + acts + '</div>';
   }).join('');
 }
@@ -1529,6 +1582,14 @@ requestAnimationFrame(frame);
   $('inviteNote').textContent = '초대받은 방 ' + code + ' — 닉네임만 적고 입장하세요.';
   $('inviteNote').hidden = false;
   setTimeout(() => $('joinName').focus(), 100);
+})();
+
+/* 새로고침 직후라면 — 로비가 잠깐 비치는 대신 돌아가는 중임을 알린다 */
+(function restoring() {
+  const seat = loadSeat();
+  if (!seat || !$('inviteNote').hidden) return;
+  $('inviteNote').textContent = '있던 방 ' + seat.code + ' 으로 돌아가는 중…';
+  $('inviteNote').hidden = false;
 })();
 
 cssHost.style.display = 'none';

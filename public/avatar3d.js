@@ -157,6 +157,7 @@ export function makeAvatar(opts) {
     body: body,
     head: head,
     name: opts.name || '익명',
+    gone: false,
     hitMeshes: [torso, skull],
 
     setName(n) {
@@ -170,7 +171,22 @@ export function makeAvatar(opts) {
         fg: opts.isMe ? '#2b1d05' : '#f2eee8'
       });
       tag.position.y = 1.78;
+      tag.material.opacity = api.gone ? 0.35 : 1;
       root.add(tag);
+    },
+
+    /* 연결이 끊긴 사람 — 돌아올 수도 있으니 지우지 않고 흐리게 둔다 */
+    setGone(on) {
+      on = !!on;
+      if (api.gone === on) return;
+      api.gone = on;
+      for (const mt of [main, dark, skin, eye]) {
+        mt.transparent = on;
+        mt.opacity = on ? 0.26 : 1;
+        mt.depthWrite = !on;
+        mt.needsUpdate = true;
+      }
+      tag.material.opacity = on ? 0.35 : 1;
     },
 
     say(text) {
@@ -228,7 +244,7 @@ export function makeAvatar(opts) {
       shadow.position.y = 0.014 - h;             // 월드 기준으로는 늘 바닥
       const sh = Math.max(0.35, 1 - h * 0.55);
       shadow.scale.set(sh, sh, 1);
-      shadow.material.opacity = Math.max(0.25, 1 - h * 0.5);
+      shadow.material.opacity = Math.max(0.25, 1 - h * 0.5) * (api.gone ? 0.3 : 1);
       if (ring) {
         ring.position.y = 0.018 - h;
         ring.material.opacity = (0.55 + Math.sin(t * 2.4) * 0.25) * (h > 0.03 ? 0.4 : 1);

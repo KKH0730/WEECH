@@ -520,6 +520,9 @@ body.cinema #topbar:hover{opacity:1;}
 .person .badge.host{background:rgba(255,184,77,.22);color:var(--accent);}
 .person .badge.cohost{background:rgba(110,200,255,.20);color:#6ec8ff;}
 .person .badge.me{background:rgba(255,255,255,.12);color:var(--dim);}
+.person .badge.gone{background:rgba(255,255,255,.08);color:var(--dim);}
+.person.isgone{opacity:.45;}
+.person.isgone .nm{text-decoration:line-through;text-decoration-thickness:1px;}
 .person .pacts{flex-basis:100%;display:flex;gap:6px;padding-left:17px;}
 .person .pbtn{
   font-size:10.5px;padding:3px 8px;border-radius:6px;border:0;cursor:pointer;

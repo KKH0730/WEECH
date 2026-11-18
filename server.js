@@ -15,6 +15,7 @@ const ROOM_CAP = 20;        // 방 하나 정원
 const MAX_ROOMS = 50;       // 동시 운영 가능한 방 수
 const MAX_PLAYLIST = 50;    // 재생목록 최대 곡 수
 const TICK_MS = 100;        // 10Hz 위치 브로드캐스트
+const GRACE_MS = 30000;     // 연결이 끊겨도 자리를 지켜주는 시간 (새로고침 복구용)
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
 const GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
@@ -333,6 +334,9 @@ function encodeFrame(payload, opcode) {
   return Buffer.concat([head, data]);
 }
 
+/* 유예 중인 사람의 자리에 꽂아두는 빈 연결 — broadcast 가 그냥 지나가게 한다 */
+const DEAD_CONN = { alive: false, send: function () {}, close: function () {} };
+
 function Conn(socket) {
   this.socket = socket;
   this.buf = Buffer.alloc(0);
@@ -443,9 +447,16 @@ function clean(s, max) {
   return out.length > max ? out.slice(0, max) : out;
 }
 
+/* 유예 중(연결 끊김)이 아닌 실제 접속자 수 */
+function liveCount(r) {
+  let n = 0;
+  for (const u of r.users.values()) if (!u.gone) n++;
+  return n;
+}
+
 function totalUsers() {
   let n = 0;
-  for (const r of rooms.values()) n += r.users.size;
+  for (const r of rooms.values()) n += liveCount(r);
   return n;
 }
 
@@ -461,7 +472,7 @@ function roomSummary(r) {
     code: r.code,
     title: r.title,
     host: host ? host.name : '—',
-    n: r.users.size,
+    n: liveCount(r),
     cap: ROOM_CAP,
     playing: r.playing,
     now: cur ? (cur.title || cur.id) : '',
@@ -471,7 +482,7 @@ function roomSummary(r) {
 
 function lobbyList() {
   const list = [];
-  for (const r of rooms.values()) list.push(roomSummary(r));
+  for (const r of rooms.values()) if (liveCount(r)) list.push(roomSummary(r));
   list.sort((a, b) => b.n - a.n);
   return list;
 }
@@ -516,9 +527,39 @@ function setPlayback(r, patch) {
   });
 }
 
+/* 소켓이 끊겼다 — 바로 내보내지 않고 GRACE_MS 동안 자리를 지켜준다.
+ * 새로고침하면 같은 토큰으로 돌아와 자리·방장 권한까지 그대로 복구된다. */
+function markGone(user) {
+  const r = user.room;
+  if (!r || user.gone) return;
+  user.gone = Date.now();
+  user.conn = DEAD_CONN;                       // 유예 중에는 보낼 곳이 없다
+  clearTimeout(user.graceTimer);
+  user.graceTimer = setTimeout(() => {
+    if (user.gone) leaveRoom(user);            // 끝내 안 돌아왔다 — 이제 진짜 퇴장
+  }, GRACE_MS);
+  broadcast(r, { t: 'gone', id: user.id, name: user.name, on: true });
+  pushLobby();
+}
+
+/* 유예 중이던 사람이 돌아왔다 */
+function restore(entry, user) {
+  const r = user.room;
+  clearTimeout(user.graceTimer);
+  user.graceTimer = null;
+  user.gone = 0;
+  user.conn = entry.conn;
+  entry.user = user;
+  broadcast(r, { t: 'gone', id: user.id, name: user.name, on: false }, user.id);
+  pushLobby();
+}
+
 function leaveRoom(user) {
   const r = user.room;
   if (!r) return;
+  clearTimeout(user.graceTimer);
+  user.graceTimer = null;
+  user.gone = 0;
   r.users.delete(user.id);
   if (r.coHosts) r.coHosts.delete(user.id);
   user.room = null;
@@ -556,7 +597,8 @@ function handleSocket(socket) {
   let msgCount = 0, windowStart = Date.now();
 
   const drop = () => {
-    if (entry.user) leaveRoom(entry.user);
+    if (entry.user) markGone(entry.user);      // 새로고침일 수 있으니 자리를 남겨둔다
+    entry.user = null;
     sockets.delete(entry);
     conn.alive = false;
   };
@@ -621,7 +663,7 @@ function handleMessage(entry, m, now) {
       rooms.set(code, room);
       const u = admit(entry, room, name);
       room.hostId = u.id;
-      conn.send({ t: 'joined', you: u.id, host: room.hostId, room: roomPayload(room), users: userList(room) });
+      conn.send({ t: 'joined', you: u.id, token: u.token, host: room.hostId, room: roomPayload(room), users: userList(room) });
       if (res.truncated) conn.send({ t: 'info', msg: '재생목록이 길어 ' + MAX_PLAYLIST + '곡까지만 담았습니다.' });
       if (res.mixes) conn.send({ t: 'info', msg: mixNote(res.mixes) });
       hydrateTitles(room);
@@ -635,11 +677,31 @@ function handleMessage(entry, m, now) {
     if (user && user.room) return;
     const code = clean(m.code, 8).toUpperCase();
     const room = rooms.get(code);
-    if (!room) { conn.send({ t: 'err', msg: '그런 방이 없습니다. 코드를 확인해 주세요.' }); return; }
+    if (!room) {
+      // 토큰을 들고 왔는데 방이 없다 — 유예가 지났거나 서버가 다시 떴다
+      conn.send(m.token
+        ? { t: 'err', msg: '있던 방이 닫혔습니다.', stale: true }
+        : { t: 'err', msg: '그런 방이 없습니다. 코드를 확인해 주세요.' });
+      return;
+    }
+
+    // 새로고침 복구 — 유예 중인 내 자리가 남아 있으면 그대로 돌아간다
+    if (m.token) {
+      let prev = null;
+      for (const p of room.users.values()) if (p.gone && p.token === m.token) { prev = p; break; }
+      if (prev) {
+        restore(entry, prev);
+        conn.send({ t: 'joined', you: prev.id, token: prev.token, host: room.hostId, room: roomPayload(room), users: userList(room) });
+        return;
+      }
+      conn.send({ t: 'err', msg: '자리가 이미 정리되었습니다.', stale: true });
+      return;
+    }
+
     if (room.users.size >= ROOM_CAP) { conn.send({ t: 'err', msg: '방이 가득 찼습니다. (' + ROOM_CAP + '명)' }); return; }
     const name = clean(m.name, 12) || '익명';
     const u = admit(entry, room, name);
-    conn.send({ t: 'joined', you: u.id, host: room.hostId, room: roomPayload(room), users: userList(room) });
+    conn.send({ t: 'joined', you: u.id, token: u.token, host: room.hostId, room: roomPayload(room), users: userList(room) });
     broadcast(room, { t: 'user+', user: pubUser(u) }, u.id);
     pushLobby();
     return;
@@ -794,6 +856,7 @@ function clampNum(v, lo, hi) {
 function admit(entry, room, name) {
   const u = {
     id: nextUserId++, name: name, conn: entry.conn, room: room,
+    token: crypto.randomBytes(12).toString('hex'), gone: 0, graceTimer: null,
     x: 600 + (Math.random() - 0.5) * 240, y: 760 + (Math.random() - 0.5) * 80,
     dir: -Math.PI / 2, st: 0, h: 0, joinedAt: Date.now(),
     lastChat: 0, lastArrow: 0
@@ -803,7 +866,7 @@ function admit(entry, room, name) {
   return u;
 }
 
-const pubUser = (u) => ({ id: u.id, name: u.name, x: Math.round(u.x), y: Math.round(u.y) });
+const pubUser = (u) => ({ id: u.id, name: u.name, x: Math.round(u.x), y: Math.round(u.y), gone: u.gone ? 1 : 0 });
 const userList = (r) => Array.from(r.users.values()).map(pubUser);
 
 /* 위치 브로드캐스트 */
@@ -813,7 +876,7 @@ setInterval(() => {
     const arr = [];
     for (const u of r.users.values()) {
       arr.push([u.id, Math.round(u.x), Math.round(u.y), Math.round(u.dir * 100) / 100, u.st, u.name, Math.round(u.h || 0),
-        Math.round((u.hy || 0) * 100) / 100, Math.round((u.hp || 0) * 100) / 100]);
+        Math.round((u.hy || 0) * 100) / 100, Math.round((u.hp || 0) * 100) / 100, u.gone ? 1 : 0]);
     }
     const msg = JSON.stringify({ t: 's', u: arr });
     for (const u of r.users.values()) u.conn.send(msg);
