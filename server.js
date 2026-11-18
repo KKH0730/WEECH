@@ -544,7 +544,8 @@ function roomPayload(r) {
   return {
     code: r.code, title: r.title, hostId: r.hostId, coHosts: Array.from(r.coHosts || []), cap: ROOM_CAP,
     playlist: r.playlist, idx: r.idx,
-    playing: r.playing, position: currentPosition(r), serverNow: Date.now()
+    playing: r.playing, position: currentPosition(r), serverNow: Date.now(),
+    karaoke: !!r.karaoke
   };
 }
 
@@ -631,6 +632,7 @@ function restore(entry, user) {
 function leaveRoom(user) {
   const r = user.room;
   if (!r) return;
+  user.mic = false; user.mmute = false;
   clearTimeout(user.graceTimer);
   user.graceTimer = null;
   user.gone = 0;
@@ -734,6 +736,7 @@ function handleMessage(entry, m, now) {
         kicked: new Map(),               // 재입장 토큰 -> 언제까지 막을지
         playlist: res.items,
         idx: 0, playing: false, position: 0, updatedAt: Date.now(),
+        karaoke: false,                  // 노래방 모드 (방장만 켠다)
         users: new Map()
       };
       rooms.set(code, room);
@@ -844,6 +847,62 @@ function handleMessage(entry, m, now) {
         nx: clampNum(m.nx, -1000, 1000), ny: clampNum(m.ny, -1000, 1000), nz: clampNum(m.nz, -1000, 1000),
         pid: m.pid | 0
       });
+      return;
+    }
+
+    /* ---- 노래방 ------------------------------------------------------
+     *  방장만 켜고 끈다. 켜지면 천장에 미러볼이 내려오고, 서로의 목소리를
+     *  주고받을 수 있게 된다. 목소리 자체는 브라우저끼리 직접(P2P) 오가고,
+     *  서버는 그 연결을 맺는 쪽지(rtc)만 중계한다 — 음성은 서버를 지나지 않는다.
+     * ------------------------------------------------------------------ */
+    case 'karaoke': {
+      if (!isHost) { conn.send({ t: 'err', msg: '방장만 노래방 모드를 켤 수 있습니다.' }); return; }
+      const on = !!m.on;
+      if (room.karaoke === on) return;
+      room.karaoke = on;
+      if (!on) {
+        // 끌 때는 모두의 마이크를 내린다 — 켜 둔 채로 다음 모드까지 새지 않게
+        for (const u of room.users.values()) { u.mic = false; u.mmute = false; }
+      }
+      broadcast(room, { t: 'karaoke', on: on, by: user.name });
+      return;
+    }
+
+    case 'mic': {
+      if (!room.karaoke) return;
+      const on = !!m.on;
+      // 잠겼다는 사실은 쿨다운보다 먼저 알린다 — 연타 가드가 이 알림을 삼키면
+      // 누른 사람은 왜 안 켜지는지 알 수 없다
+      if (on && user.mmute) { conn.send({ t: 'err', msg: '방장이 회원님의 마이크를 꺼 두었습니다.' }); return; }
+      if (user.mic === on) return;
+      if (now - user.lastMic < 400) return;      // 연타로 재협상이 쏟아지지 않게
+      user.lastMic = now;
+      user.mic = on;
+      broadcast(room, { t: 'mic', id: user.id, on: on });
+      return;
+    }
+
+    case 'micmute': {
+      if (!isHost) { conn.send({ t: 'err', msg: '방장만 남의 마이크를 끌 수 있습니다.' }); return; }
+      const target = room.users.get(m.id | 0);
+      if (!target || target.id === user.id) return;
+      const on = !!m.on;                          // on = 잠근다
+      if (target.mmute === on) return;
+      target.mmute = on;
+      if (on && target.mic) {
+        target.mic = false;
+        broadcast(room, { t: 'mic', id: target.id, on: false });
+      }
+      broadcast(room, { t: 'micmute', id: target.id, on: on, name: target.name });
+      return;
+    }
+
+    /* 연결용 쪽지 중계 — 내용은 들여다보지 않고 받는 사람에게만 넘긴다 */
+    case 'rtc': {
+      if (!room.karaoke) return;
+      const target = room.users.get(m.to | 0);
+      if (!target || target.id === user.id || target.gone) return;
+      target.conn.send({ t: 'rtc', from: user.id, data: m.data });
       return;
     }
 
@@ -994,14 +1053,19 @@ function admit(entry, room, name) {
     token: crypto.randomBytes(12).toString('hex'), gone: 0, graceTimer: null, seat: -1,
     x: 600 + (Math.random() - 0.5) * 240, y: 760 + (Math.random() - 0.5) * 80,
     dir: -Math.PI / 2, st: 0, h: 0, joinedAt: Date.now(),
-    lastChat: 0, lastArrow: 0, lastRename: 0
+    mic: false,                      // 본인이 마이크를 켰나
+    mmute: false,                    // 방장이 이 사람 마이크를 잠갔나
+    lastChat: 0, lastArrow: 0, lastRename: 0, lastMic: 0
   };
   room.users.set(u.id, u);
   entry.user = u;
   return u;
 }
 
-const pubUser = (u) => ({ id: u.id, name: u.name, x: Math.round(u.x), y: Math.round(u.y), gone: u.gone ? 1 : 0, seat: u.seat });
+const pubUser = (u) => ({
+  id: u.id, name: u.name, x: Math.round(u.x), y: Math.round(u.y),
+  gone: u.gone ? 1 : 0, seat: u.seat, mic: u.mic ? 1 : 0, mmute: u.mmute ? 1 : 0
+});
 const userList = (r) => Array.from(r.users.values()).map(pubUser);
 
 /* 위치 브로드캐스트 */
@@ -1011,7 +1075,8 @@ setInterval(() => {
     const arr = [];
     for (const u of r.users.values()) {
       arr.push([u.id, Math.round(u.x), Math.round(u.y), Math.round(u.dir * 100) / 100, u.st, u.name, Math.round(u.h || 0),
-        Math.round((u.hy || 0) * 100) / 100, Math.round((u.hp || 0) * 100) / 100, u.gone ? 1 : 0]);
+        Math.round((u.hy || 0) * 100) / 100, Math.round((u.hp || 0) * 100) / 100, u.gone ? 1 : 0,
+        u.mic ? 1 : 0, u.mmute ? 1 : 0]);
     }
     const msg = JSON.stringify({ t: 's', u: arr });
     for (const u of r.users.values()) u.conn.send(msg);

@@ -10,6 +10,7 @@ import { CSS3DRenderer } from './vendor/CSS3DRenderer.js';
 import { buildScene } from './scene3d.js';
 import { makeAvatar, colorOf } from './avatar3d.js';
 import * as TV from './youtube.js';
+import * as Voice from './voice.js';
 
 const R = ROOM3D;
 const $ = (id) => document.getElementById(id);
@@ -82,6 +83,8 @@ const me = {
 const others = new Map();
 let myAvatar = null;
 let room = null, isHost = false;
+let karaoke = false;                               // 노래방 모드가 켜져 있나
+let micOn = false;                                 // 내 마이크를 켰나
 let coHosts = [];                                  // 부방장 id 목록
 const canCtl = () => isHost || coHosts.includes(myId);   // 재생·설정을 조작할 수 있는가
 
@@ -386,6 +389,8 @@ function connect() {
         const seated = m.seats || {};
         if (seated[myId] !== undefined && seated[myId] >= 0) sitAt(seated[myId]);
         enterRoom();
+        Voice.setMyId(myId);
+        setKaraoke(!!(room && room.karaoke));      // 켜져 있는 방에 들어왔을 수도 있다
         break;
       }
 
@@ -416,7 +421,9 @@ function connect() {
           if (g.gone !== gone) { g.gone = gone; g.av.setGone(gone); }
         });
         for (const id of Array.from(others.keys())) if (!seen.has(id)) removeOther(id);
-        peopleCache = (m.u || []).map((a) => ({ id: a[0], name: a[5], gone: !!a[9] }));
+        peopleCache = (m.u || []).map((a) => ({
+          id: a[0], name: a[5], gone: !!a[9], mic: !!a[10], mmute: !!a[11]
+        }));
         peopleCache.sort((a, b) => (b.id === myId) - (a.id === myId) || a.id - b.id);
         renderPeopleHead();
         renderPeople();
@@ -490,6 +497,33 @@ function connect() {
         break;
       }
 
+      case 'karaoke':
+        setKaraoke(m.on, m.by);
+        break;
+
+      case 'mic':
+        if (m.id === myId) { micOn = !!m.on; updateMicBtn(); }
+        peopleSig = '';
+        renderPeople();
+        break;
+
+      case 'micmute':
+        if (m.id === myId) {
+          if (m.on) { micOn = false; Voice.setMic(false); }
+          toast(m.on ? '방장이 회원님의 마이크를 껐습니다.' : '마이크 잠금이 풀렸습니다.', 3400);
+          updateMicBtn();
+        } else {
+          logMsg(esc(m.name || '누군가') + (m.on ? ' 님의 마이크가 꺼졌습니다.' : ' 님의 마이크 잠금이 풀렸습니다.'), 'sys');
+        }
+        peopleSig = '';
+        renderPeople();
+        break;
+
+      // 연결용 쪽지 — 내용은 voice.js 가 푼다
+      case 'rtc':
+        Voice.signal(m.from, m.data);
+        break;
+
       case 'rename': {
         if (m.id === myId) {
           me.name = m.name;
@@ -532,6 +566,79 @@ function connect() {
 
 function scheduleRetry() { clearTimeout(retry); retry = setTimeout(connect, 2500); }
 
+/* ---- 노래방 모드 ---------------------------------------------------
+ *  방장이 켜면 천장에서 미러볼이 내려오고, 서로 목소리를 주고받을 수 있다.
+ *  목소리는 브라우저끼리 직접(P2P) 오가고 서버는 연결용 쪽지만 중계한다.
+ * ------------------------------------------------------------------ */
+Voice.init({
+  signal: (to, data) => send({ t: 'rtc', to: to, data: data }),
+  notice: (msg) => toast(msg, 4600)
+});
+
+const meInList = () => peopleCache.find((p) => p.id === myId) || null;
+const micLocked = () => { const m = meInList(); return !!(m && m.mmute); };
+
+function syncVoicePeers() {
+  if (karaoke) Voice.setPeers(Array.from(others.keys()));
+}
+
+function updateMicBtn() {
+  const b = $('micBtn');
+  if (!b) return;
+  const locked = micLocked();
+  b.classList.toggle('on', micOn && !locked);
+  b.classList.toggle('locked', locked);
+  b.disabled = locked;
+  const lbl = b.querySelector('.kb-lbl');
+  if (lbl) lbl.textContent = locked ? '방장이 껐습니다' : (micOn ? '마이크 끄기' : '마이크 켜기');
+}
+
+function setKaraoke(on, byName) {
+  on = !!on;
+  const was = karaoke;
+  karaoke = on;
+  if (room) room.karaoke = on;
+  world.setKaraoke(on);                       // 미러볼이 내려오거나 올라간다
+  document.body.classList.toggle('karaoke', on);
+  $('karaokeBar').hidden = !on;
+  $('miKaraoke').classList.toggle('on', on);    // ⚙ 메뉴의 스위치
+  if (on) {
+    Voice.setMyId(myId);
+    Voice.setEnabled(true, Array.from(others.keys()));
+  } else {
+    Voice.setEnabled(false);
+    micOn = false;
+  }
+  updateMicBtn();
+  peopleSig = '';
+  renderPeople();
+  if (was === on || screen !== 'room') return;
+  if (on) {
+    logMsg('🪩 <b>노래방 모드</b>가 켜졌습니다' + (byName ? ' — ' + esc(byName) : '') +
+      '. 위쪽 <b>마이크 켜기</b> 로 노래하세요.', 'sys');
+    if (!Voice.micAvailable()) logMsg(esc(Voice.micUnavailableReason()), 'sys');
+  } else {
+    logMsg('노래방 모드가 꺼졌습니다.', 'sys');
+  }
+}
+
+$('micBtn').addEventListener('click', () => {
+  if (!karaoke || micLocked()) return;
+  const want = !micOn;
+  if (want && !Voice.micAvailable()) { toast(Voice.micUnavailableReason(), 6500); return; }
+  Voice.setMic(want).then((ok) => {
+    micOn = want && ok;
+    updateMicBtn();
+    send({ t: 'mic', on: micOn });
+  });
+});
+
+$('miKaraoke').addEventListener('click', () => {
+  openSet(false);
+  if (!isHost) { toast('방장만 노래방 모드를 켤 수 있습니다.', 2600); return; }
+  send({ t: 'karaoke', on: !karaoke });
+});
+
 function send(obj) {
   if (ws && ws.readyState === 1) { ws.send(JSON.stringify(obj)); return; }
   if (ws && ws.readyState === 0) { if (outbox.length < 20) outbox.push(obj); return; }
@@ -542,6 +649,7 @@ function send(obj) {
 /* 아바타 관리                                                           */
 /* ------------------------------------------------------------------ */
 function addOther(u) {
+  if (karaoke) setTimeout(syncVoicePeers, 0);
   const av = makeAvatar({ name: u.name, seed: u.id, isMe: false });
   scene.add(av.root);
   av.hitMeshes.forEach((mesh) => hitToPlayer.set(mesh.uuid, u.id));
@@ -556,6 +664,7 @@ function addOther(u) {
 }
 
 function removeOther(id) {
+  if (karaoke) setTimeout(syncVoicePeers, 0);
   const g = others.get(id);
   if (!g) return;
   g.av.hitMeshes.forEach((mesh) => hitToPlayer.delete(mesh.uuid));
@@ -612,6 +721,7 @@ function leaveToLobby() {
   setChatMin(true);               // 기본 상태(접힘)로 되돌린다
   cssHost.style.display = 'none';
   setWatchMode(false);
+  setKaraoke(false);                 // 목소리 연결을 모두 끊는다
   renderRooms();
 }
 
@@ -735,6 +845,27 @@ function renderPeopleHead() {
   headCount = n;
 }
 
+/* 헤드셋 — 소리 차단 버튼의 그림. 막아 두면 CSS 가 빗금을 긋는다 */
+const HEADSET =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+  'stroke-linecap="round" stroke-linejoin="round">' +
+  '<path d="M4 15v-3a8 8 0 0 1 16 0v3"/>' +
+  '<rect x="2.2" y="14.2" width="4.4" height="6.4" rx="1.7"/>' +
+  '<rect x="17.4" y="14.2" width="4.4" height="6.4" rx="1.7"/>' +
+  '</svg>';
+
+/* 이 사람 소리만 내 쪽에서 막는다 — 서버를 거치지 않으므로 상대는 모른다 */
+function toggleBlock(id) {
+  if (id === myId) return;
+  const p = peopleCache.find((x) => x.id === id);
+  const on = !Voice.isBlocked(id);
+  Voice.setBlocked(id, on);
+  toast((p ? p.name : '이 사람') +
+    (on ? ' 님의 소리를 차단했습니다 (나에게만 적용)' : ' 님의 소리를 다시 듣습니다.'), 2800);
+  peopleSig = '';
+  renderPeople();
+}
+
 let peopleSig = '';
 function renderPeople() {
   if (!peopleOpen) return;
@@ -760,14 +891,28 @@ function renderPeople() {
       (isCo ? '<span class="badge cohost">부방장</span>' : '') +
       (p.id === myId ? '<span class="badge me">나</span>' : '') +
       (p.gone ? '<span class="badge gone">연결 끊김</span>' : '');
-    // 내 줄에는 ✎ (이름 바꾸기), 남의 줄에는 방장만 쓸 수 있는 ⋯ (관리)
-    const acts = p.id === myId
+    const mine = p.id === myId;
+    // 노래방일 때만 마이크 상태를 보여 준다
+    const mic = karaoke
+      ? '<span class="micst ' + (p.mmute ? 'lock' : (p.mic ? 'on' : 'off')) + '" title="' +
+        (p.mmute ? '방장이 껐음' : (p.mic ? '마이크 켬' : '마이크 끔')) + '">🎤</span>'
+      : '';
+    // 소리 차단 — 헤드셋 버튼 하나로 켜고 끈다. 내 귀에만 적용되므로 누구나 누른다.
+    const off = !mine && Voice.isBlocked(p.id);
+    const blk = mine ? ''
+      : '<button class="pblk' + (off ? ' off' : '') + '" data-blk="' + p.id + '" title="' +
+        (off ? '소리 차단 중 — 누르면 다시 들립니다' : '이 사람 소리 차단 (나에게만 적용)') +
+        '" aria-label="소리 차단">' + HEADSET + '</button>';
+    // 내 줄에는 ✎ (이름 바꾸기), 남의 줄에는 방장만 쓰는 ⋯ (관리)
+    const acts = mine
       ? '<button class="pedit" title="이름 바꾸기" aria-label="이름 바꾸기">✎</button>'
-      : ((isHost && !isP)
-        ? '<button class="pmore" data-more="' + p.id + '" title="관리" aria-label="관리">⋯</button>'
-        : '');
-    return '<div class="person' + (p.gone ? ' isgone' : '') + '"><span class="swatch" style="background:#' + c + '"></span>' +
-           '<span class="nm">' + esc(p.name || '익명') + '</span>' + badges + acts + '</div>';
+      : (isHost ? '<button class="pmore" data-more="' + p.id + '" title="관리" aria-label="관리">⋯</button>' : '');
+    // 이름과 배지(방장·나)는 한 덩어리로 왼쪽에, 마이크·헤드셋·⋯ 는 오른쪽 끝에
+    return '<div class="person' + (p.gone ? ' isgone' : '') + '">' +
+           '<span class="swatch" style="background:#' + c + '"></span>' +
+           '<span class="pname"><span class="nm">' + esc(p.name || '익명') + '</span>' +
+           '<span class="badges">' + badges + '</span></span>' +
+           mic + blk + acts + '</div>';
   }).join('');
 }
 
@@ -788,15 +933,26 @@ function closePMenu() {
 
 function openPMenu(id, anchor) {
   const p = peopleCache.find((x) => x.id === id);
-  if (!p || !isHost) return;
+  if (!p || id === myId || !isHost) return;
   const isCo = coHosts.includes(id);
+  const targetIsHost = !!(room && room.hostId === id);
   pmenuId = id;
-  pmenu.innerHTML =
-    '<button class="pmi" data-act="cohost" data-on="' + (isCo ? '0' : '1') + '">' +
-      (isCo ? '부방장 해제' : '부방장 지정') + '</button>' +
-    '<button class="pmi" data-act="makehost">방장 넘기기</button>' +
-    '<div class="sep"></div>' +
-    '<button class="pmi danger" data-act="kick">내보내기</button>';
+
+  // 소리 차단은 줄에 붙은 헤드셋이 맡는다 — 여기는 방장 권한만 모은다
+  const rows = [];
+  if (karaoke) {
+    rows.push('<button class="pmi" data-act="micmute" data-on="' + (p.mmute ? '0' : '1') + '">' +
+      (p.mmute ? '마이크 잠금 해제' : '마이크 끄기') + '</button>');
+    rows.push('<div class="sep"></div>');
+  }
+  if (!targetIsHost) {
+    rows.push('<button class="pmi" data-act="cohost" data-on="' + (isCo ? '0' : '1') + '">' +
+      (isCo ? '부방장 해제' : '부방장 지정') + '</button>');
+    rows.push('<button class="pmi" data-act="makehost">방장 넘기기</button>');
+    rows.push('<div class="sep"></div>');
+    rows.push('<button class="pmi danger" data-act="kick">내보내기</button>');
+  }
+  pmenu.innerHTML = rows.join('');
   pmenu.hidden = false;
   anchor.classList.add('open');
 
@@ -854,6 +1010,8 @@ function startRename(btn) {
 $('peopleList').addEventListener('click', (e) => {
   const ed = e.target.closest('button.pedit');
   if (ed) { e.stopPropagation(); startRename(ed); return; }
+  const bl = e.target.closest('button.pblk');
+  if (bl) { e.stopPropagation(); toggleBlock(+bl.dataset.blk); return; }
   const b = e.target.closest('button.pmore');
   if (!b) return;
   e.stopPropagation();
@@ -870,8 +1028,15 @@ pmenu.addEventListener('click', (e) => {
   const id = pmenuId;
   const p = peopleCache.find((x) => x.id === id);
   const who = (p ? p.name : '이 사람');
+  const act = b.dataset.act;
   closePMenu();
-  if (!isHost || id < 0) return;
+  if (id < 0) return;
+
+  if (!isHost) return;
+  if (act === 'micmute') {
+    send({ t: 'micmute', id: id, on: b.dataset.on === '1' });
+    return;
+  }
 
   if (b.dataset.act === 'makehost') {
     if (confirm(who + ' 님에게 방장을 넘기시겠습니까?')) send({ t: 'makehost', id: id });
@@ -893,6 +1058,10 @@ function applyHostUI() {
   $('hostCtl').hidden = !ctl;
   $('guestNote').hidden = ctl;
   $('playlistBtn').hidden = !ctl;
+  $('miKaraoke').hidden = !isHost;     // 노래방 모드는 방장만
+  const sep = $('setDrop').querySelector('.smi-sep');
+  if (sep) sep.hidden = !isHost;
+  $('miKaraoke').classList.toggle('on', karaoke);
   $('miTitle').hidden = !ctl;          // 설정 메뉴의 '방 제목 수정'
   $('titleEdit').hidden = !ctl;        // 제목 옆 연필
   // 좌상단 제목도 같은 권한일 때만 눌린다 (#hud 가 pointer-events:none 이라 클래스로 켠다)

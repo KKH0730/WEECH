@@ -139,6 +139,14 @@ const ROOM3D = (function () {
    *    천장 코브 : 벽에서 COVE.inset 만큼 들어온 자리에 띠를 두르고 천장을 비춘다
    *    하단 스트립 : 영화관 통로등처럼 벽 아래를 따라 낮고 따뜻하게 깔린다
    * ------------------------------------------------------------------ */
+  /* 천장 한가운데 매단 미러볼 — 노래방 모드에서만 내려온다.
+   *  y 는 '내려온 뒤' 공의 중심. 천장(H)에서 짧은 줄로 매단다. */
+  const MIRROR = {
+    x: 0, y: H - 1.9, z: 0, r: 0.58, drop: 1.1,
+    dots: 56,          // 벽·바닥을 쓸고 지나가는 빛 점 개수
+    beams: 16          // 공에서 뻗는 빔 개수
+  };
+
   /* 뒷쪽 중앙 천장에 매단 영사기. 천장(H) 바로 아래에 짧은 마운트로 붙인다.
      여기서 화면 쪽으로 빔이 비스듬히 내려 뻗는다. */
   const PROJECTOR = { x: 0, y: H - 0.55, z: D / 2 - 1.2, w: 0.52, h: 0.28, d: 0.66 };
@@ -153,7 +161,8 @@ const ROOM3D = (function () {
     floor: 6.5,         // 하단 간접 (영화관 통로등)
     tv: 6.5,            // 화면이 뿜는 빛 — 방에서 가장 밝은 것
     board: 1.9,         // 전광판
-    neon: 2.4           // 스크린 위 네온 간판
+    neon: 2.4,          // 스크린 위 네온 간판
+    mirror: 5.4         // 미러볼이 뿌리는 빛 (노래방 모드)
   };
 
   const COVE = { inset: 0.75, y: H - 0.3, w: 0.14 };       // 천장 코브 띠
@@ -299,7 +308,7 @@ const ROOM3D = (function () {
     CARPET: CARPET, CARPETS: CARPETS, furniture: furniture, lamps: lamps, solids: solids,
     LIGHT: LIGHT,
     COVE: COVE, STRIP: STRIP, CEIL_LIGHTS: CEIL_LIGHTS, FLOOR_LIGHTS: FLOOR_LIGHTS,
-    PROJECTOR: PROJECTOR,
+    PROJECTOR: PROJECTOR, MIRROR: MIRROR,
     seats: seats, seatAt: seatAt, SEAT_ZONE: SEAT_ZONE, CINEMA: CINEMA,
     spawn: spawn, collide: collide, moveVector: moveVector,
     groundAt: groundAt, TOP: TOP, STEP: STEP,

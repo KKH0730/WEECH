@@ -498,6 +498,149 @@ export function buildScene() {
   const hemi = new THREE.HemisphereLight(0x5e5e82, 0x3a2d26, R.LIGHT.hemi);
   scene.add(hemi);
 
+  /* ---------------- 미러볼 (노래방 모드) ----------------
+   *  평소에는 천장에 숨어 있다가, 노래방 모드를 켜면 줄을 타고 내려오며 커진다.
+   *  면을 각지게(flatShading) 깎아 돌 때마다 면마다 빛을 다르게 튕긴다.
+   *  빛은 공을 중심으로 도는 색 광원 둘 + 덧셈으로 그리는 빔 다발로 낸다.
+   *  광원을 둘로 묶어 둔 건 방 전체 광원 수를 지키기 위해서다. */
+  const M = R.MIRROR;
+  const mirrorGrp = new THREE.Group();
+  mirrorGrp.position.set(M.x, M.y, M.z);
+  mirrorGrp.visible = false;
+  scene.add(mirrorGrp);
+
+  // 천장까지 올라가는 줄
+  const cordLen = R.H - M.y;
+  const cord = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.012, 0.012, cordLen, 6),
+    mat(0x2a2630, 0.9)
+  );
+  cord.position.y = cordLen / 2;
+  mirrorGrp.add(cord);
+
+  // 공 — 돌아가는 부분만 따로 묶는다
+  const ballGrp = new THREE.Group();
+  mirrorGrp.add(ballGrp);
+  const ball = new THREE.Mesh(
+    new THREE.IcosahedronGeometry(M.r, 3),
+    new THREE.MeshStandardMaterial({
+      color: 0xb8c4d8, metalness: 1.0, roughness: 0.16, flatShading: true,
+      emissive: 0x1b2436, emissiveIntensity: 0.75
+    })
+  );
+  ballGrp.add(ball);
+
+  // 공 둘레의 번짐 — 덧셈으로 올린 둥근 빛무리
+  const haloTex = canvasTex(THREE, 128, 128, (g, w) => {
+    const grd = g.createRadialGradient(w / 2, w / 2, 0, w / 2, w / 2, w / 2);
+    grd.addColorStop(0, 'rgba(255,255,255,.95)');
+    grd.addColorStop(0.25, 'rgba(255,190,235,.5)');
+    grd.addColorStop(1, 'rgba(255,120,210,0)');
+    g.fillStyle = grd; g.fillRect(0, 0, w, w);
+  }).tex;
+  const halo = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: haloTex, transparent: true, opacity: 0,
+    blending: THREE.AdditiveBlending, depthWrite: false
+  }));
+  halo.scale.setScalar(M.r * 7);
+  mirrorGrp.add(halo);
+
+  // 빔 다발 — 공에서 뻗어 나가는 얇고 긴 판. 덧셈으로 그려 빛처럼 보인다.
+  // 두 벌을 서로 반대로 돌려 교차하게 한다.
+  const beamMats = [
+    new THREE.MeshBasicMaterial({ color: 0xffc6ec, transparent: true, opacity: 0,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }),
+    new THREE.MeshBasicMaterial({ color: 0xb6e8ff, transparent: true, opacity: 0,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide })
+  ];
+  const beamSets = [new THREE.Group(), new THREE.Group()];
+  beamSets.forEach((set, si) => {
+    const n = M.beams;
+    for (let i = 0; i < n; i++) {
+      const len = 8.4 + (i % 4) * 1.3;
+      const b = new THREE.Mesh(new THREE.PlaneGeometry(0.13 + (i % 3) * 0.05, len), beamMats[si]);
+      b.position.y = -len / 2;
+      const arm = new THREE.Group();
+      arm.add(b);
+      arm.rotation.y = (i / n) * Math.PI * 2 + si * 0.2;
+      arm.rotation.z = 0.3 + (i % 5) * 0.22;       // 벌어지는 각을 조금씩 달리한다
+      set.add(arm);
+    }
+    ballGrp.add(set);
+  });
+
+  /* ---- 벽·바닥을 쓸고 지나가는 빛 점 ----
+   *  진짜 미러볼의 핵심은 공 자체가 아니라 '방에 흩뿌려진 점' 이다.
+   *  공 중심에서 쏜 방향을 방 상자(x·y·z 여섯 면)에 투영해 맞은 자리에 점을 놓는다.
+   *  면을 맞히는 계산은 축마다 나눗셈 한 번이라 56개를 매 프레임 돌려도 가볍다.
+   *  점은 덧셈으로 그리고 깊이를 쓰지 않아 벽 위에 빛처럼 얹힌다. */
+  const dotTex = canvasTex(THREE, 64, 64, (g, w) => {
+    const grd = g.createRadialGradient(w / 2, w / 2, 0, w / 2, w / 2, w / 2);
+    grd.addColorStop(0, 'rgba(255,255,255,1)');
+    grd.addColorStop(0.35, 'rgba(255,255,255,.55)');
+    grd.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = grd; g.fillRect(0, 0, w, w);
+  }).tex;
+  const DOT_HUES = [0xff5ab0, 0x5ad2ff, 0xffe08a];      // 분홍 · 하늘 · 금빛
+  const dotMats = DOT_HUES.map((c) => new THREE.SpriteMaterial({
+    map: dotTex, color: c, transparent: true, opacity: 0,
+    blending: THREE.AdditiveBlending, depthWrite: false
+  }));
+  const dotGrp = new THREE.Group();
+  dotGrp.visible = false;
+  scene.add(dotGrp);
+
+  const dots = [];
+  for (let i = 0; i < M.dots; i++) {
+    // 피보나치 구면 분포 — 방향이 뭉치지 않고 고르게 퍼진다
+    const k = (i + 0.5) / M.dots;
+    const phi = Math.acos(1 - 2 * k);
+    const th = Math.PI * (1 + Math.sqrt(5)) * i;
+    const dir = new THREE.Vector3(
+      Math.sin(phi) * Math.cos(th), Math.cos(phi), Math.sin(phi) * Math.sin(th)
+    );
+    const s = new THREE.Sprite(dotMats[i % dotMats.length]);
+    dotGrp.add(s);
+    dots.push({ dir: dir, spr: s, ph: Math.random() * 6.28 });
+  }
+
+  /* 공 중심 p 에서 방향 d 로 쏘아 방 상자에 맞는 거리. 못 맞히면 0 */
+  const HB = { x: R.W / 2 - 0.06, z: R.D / 2 - 0.06, yTop: R.H - 0.06, yBot: 0.06 };
+  function hitRoom(px, py, pz, d) {
+    let best = Infinity;
+    if (d.x > 1e-6 || d.x < -1e-6) {
+      const t = ((d.x > 0 ? HB.x : -HB.x) - px) / d.x;
+      if (t > 0.1 && t < best) best = t;
+    }
+    if (d.z > 1e-6 || d.z < -1e-6) {
+      const t = ((d.z > 0 ? HB.z : -HB.z) - pz) / d.z;
+      if (t > 0.1 && t < best) best = t;
+    }
+    if (d.y > 1e-6 || d.y < -1e-6) {
+      const t = ((d.y > 0 ? HB.yTop : HB.yBot) - py) / d.y;
+      if (t > 0.1 && t < best) best = t;
+    }
+    return best === Infinity ? 0 : best;
+  }
+
+  // 색 광원 둘 — 공 주위를 서로 반대로 돈다
+  const mLightA = new THREE.PointLight(0xff5ab0, 0, 18, 2);
+  const mLightB = new THREE.PointLight(0x5ad2ff, 0, 18, 2);
+  mirrorGrp.add(mLightA, mLightB);
+
+  const _d = new THREE.Vector3();
+  const Y_AXIS = new THREE.Vector3(0, 1, 0);
+
+  api.mirrorGroup = mirrorGrp;
+  api.mirrorBall = ballGrp;
+  api.mirrorLights = [mLightA, mLightB];
+  api.mirrorDots = dotGrp;
+
+  let karaoke = false;
+  let mirrorT = 0;             // 0 = 천장에 숨음, 1 = 다 내려옴
+  api.setKaraoke = function (on) { karaoke = !!on; };
+  api.karaokeOn = function () { return karaoke; };
+
   api.update = function (t, tvOn) {
     // TV 가 켜져 있으면 화면빛이 미세하게 일렁인다
     const target = tvOn
@@ -521,6 +664,74 @@ export function buildScene() {
       const fl = 0.88 + Math.sin(t * 1.9) * 0.08 + Math.sin(t * 13.7) * 0.04;
       api.neonLight.intensity = R.LIGHT.neon * fl;
       api.neonMesh.material.opacity = 0.92 + (fl - 0.88) * 0.6;
+    }
+
+    /* ---- 미러볼 ----
+     *  mirrorT 를 0↔1 로 부드럽게 옮기고, 그 값 하나로 내려온 높이·크기·밝기를
+     *  모두 끌고 간다. 다 숨으면 아예 그리지 않는다. */
+    {
+      const want = karaoke ? 1 : 0;
+      mirrorT += (want - mirrorT) * 0.055;
+      if (mirrorT < 0.003 && !karaoke) {
+        mirrorT = 0;
+        if (mirrorGrp.visible) { mirrorGrp.visible = false; dotGrp.visible = false; }
+      } else {
+        mirrorGrp.visible = true;
+        const e = mirrorT * mirrorT * (3 - 2 * mirrorT);        // 부드럽게 (smoothstep)
+        mirrorGrp.position.y = M.y + (1 - e) * M.drop;          // 천장에서 내려온다
+        ballGrp.scale.setScalar(0.08 + e * 0.92);
+        ballGrp.rotation.y = t * 0.55;
+        ballGrp.rotation.z = Math.sin(t * 0.21) * 0.1;
+        cord.scale.y = Math.max(0.001, 1 - (1 - e) * (M.drop / cordLen));
+        cord.position.y = (cordLen * cord.scale.y) / 2;
+
+        // 반짝임 — 면이 돌며 빛을 튕기는 느낌
+        const tw = 0.82 + Math.sin(t * 5.3) * 0.12 + Math.sin(t * 11.9) * 0.06;
+        ball.material.emissiveIntensity = 1.5 * tw * e;
+        halo.material.opacity = 0.5 * e * tw;
+        halo.scale.setScalar(M.r * (6.4 + Math.sin(t * 2.6) * 0.8));
+
+        // 빔 두 벌 — 서로 반대로 돌며 밝기도 엇갈리게 뛴다
+        beamSets[0].rotation.y = t * 0.42;
+        beamSets[1].rotation.y = -t * 0.66;
+        beamSets[1].rotation.x = 0.26;
+        beamMats[0].opacity = 0.14 * e * (0.72 + Math.sin(t * 3.1) * 0.28);
+        beamMats[1].opacity = 0.11 * e * (0.72 + Math.sin(t * 2.3 + 1.6) * 0.28);
+
+        const amp = R.LIGHT.mirror * e;
+        mLightA.intensity = amp * (0.75 + Math.sin(t * 2.7) * 0.25);
+        mLightB.intensity = amp * (0.75 + Math.sin(t * 2.7 + 2.1) * 0.25);
+        mLightA.position.set(Math.cos(t * 0.9) * 1.5, -0.5, Math.sin(t * 0.9) * 1.5);
+        mLightB.position.set(Math.cos(-t * 0.7 + 1.7) * 1.5, -0.5, Math.sin(-t * 0.7 + 1.7) * 1.5);
+
+        /* ---- 벽·바닥 위를 쓸고 가는 빛 점 ----
+         *  공과 같은 속도로 방향 다발을 돌리고, 각 방향이 방에 맞는 자리에 점을 놓는다.
+         *  멀리 맞을수록 점이 커지고 옅어진다 — 실제로 퍼지는 빛과 같은 방향이다. */
+        const px = mirrorGrp.position.x, py = mirrorGrp.position.y, pz = mirrorGrp.position.z;
+        const spin = t * 0.55;
+        const tilt = Math.sin(t * 0.21) * 0.1;
+        dotGrp.visible = true;
+        for (let i = 0; i < dots.length; i++) {
+          const dt = dots[i];
+          _d.copy(dt.dir).applyAxisAngle(Y_AXIS, spin);
+          _d.y += tilt * 0.35;
+          _d.normalize();
+          const hit = hitRoom(px, py, pz, _d);
+          if (!hit) { dt.spr.visible = false; continue; }
+          dt.spr.visible = true;
+          // 맞은 자리에서 3cm 앞으로 빼 벽면과 겹쳐 깜빡이지 않게 한다
+          dt.spr.position.set(px + _d.x * (hit - 0.03), py + _d.y * (hit - 0.03), pz + _d.z * (hit - 0.03));
+          const sz = 0.16 + hit * 0.075;
+          dt.spr.scale.setScalar(sz);
+          dt.spr.material.needsUpdate = false;
+          dt.spr.material.rotation = 0;
+        }
+        // 점 밝기는 색깔 묶음 단위로 — 재질 셋이라 반짝임도 셋으로 엇갈린다
+        for (let i = 0; i < dotMats.length; i++) {
+          const fl = 0.62 + Math.sin(t * (3.4 + i * 1.1) + i * 2.1) * 0.38;
+          dotMats[i].opacity = 0.9 * e * fl;
+        }
+      }
     }
   };
 
