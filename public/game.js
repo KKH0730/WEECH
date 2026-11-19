@@ -32,7 +32,10 @@ webglHost.appendChild(renderer.domElement);
 const cssRenderer = new CSS3DRenderer();
 cssHost.appendChild(cssRenderer.domElement);
 
-const camera = new THREE.PerspectiveCamera(52, 1, 0.1, 120);
+/* 화각(시야각). 좁힐수록 멀리 당겨 보인다 — 1인칭에는 '거리' 가 없으니
+ * 확대·축소를 이걸로 한다. 3인칭은 거리(cam.dist)를 쓴다. */
+const FOV_BASE = 52, FOV_MIN = 21, FOV_MAX = 70;
+const camera = new THREE.PerspectiveCamera(FOV_BASE, 1, 0.1, 120);
 const world = buildScene();
 const scene = world.scene;
 const cssScene = new THREE.Scene();
@@ -104,7 +107,8 @@ const cam = {
   yaw: 0,
   pitch: 0.88,
   look: 0.0,
-  dist: 12.5
+  dist: 12.5,
+  fov: FOV_BASE        // 1인칭에서 휠로 당긴 화각
 };
 const camPos = new THREE.Vector3(0, 6, 10);
 const camAim = new THREE.Vector3(0, 1, 0);
@@ -681,6 +685,42 @@ function setMode(v, byName) {
 const MODE_PILL_MS = 5000;
 const MODE_PILL_FADE_MS = 700;                  // CSS mpFade 와 같은 길이
 let modePillTimer = 0;
+/* 확대하는 방법을 기기에 맞춰 한 마디로. 마우스가 없는 기기에서
+ * '휠' 이라고 하면 쓸 수 있는 줄을 모른다. */
+function zoomHow() {
+  const coarse = matchMedia('(hover: none) and (pointer: coarse)').matches;
+  return coarse ? '두 손가락으로 확대·축소' : '휠로 확대·축소';
+}
+
+/* 지금 몇 배로 당겨 보고 있나. 화면 오른쪽에 잠깐 떴다 사라진다.
+ * 배율은 기본 화각 대비 — tan 비로 재야 눈에 보이는 크기와 맞는다. */
+let zoomTimer = null;
+function zoomFactor() {
+  return Math.tan(FOV_BASE * Math.PI / 360) / Math.tan(cam.fov * Math.PI / 360);
+}
+function showZoom() {
+  const el = $('zoomPill');
+  if (!el) return;
+  const z = zoomFactor();
+  el.textContent = '×' + (z < 9.95 ? z.toFixed(1) : Math.round(z));
+  el.classList.toggle('wide', z < 0.995);        // 기본보다 넓게 펼친 상태
+  el.classList.remove('out');
+  el.hidden = false;
+  void el.offsetWidth;
+  clearTimeout(zoomTimer);
+  zoomTimer = setTimeout(() => {
+    el.classList.add('out');
+    setTimeout(() => { if (el.classList.contains('out')) el.hidden = true; }, 700);
+  }, 1100);
+}
+function hideZoom() {
+  const el = $('zoomPill');
+  if (!el) return;
+  clearTimeout(zoomTimer);
+  el.hidden = true;
+  el.classList.remove('out');
+}
+
 function showModePill(v) {
   const on = v === 'karaoke';
   const el = $('modePill');
@@ -953,7 +993,7 @@ function enterRoom() {
   myAvatar = makeAvatar({ name: me.name, seed: myId, isMe: true });
   scene.add(myAvatar.root);
 
-  cam.yaw = 0; cam.pitch = 0.88; cam.dist = 12.5; cam.mode = 'lounge';
+  cam.yaw = 0; cam.pitch = 0.88; cam.dist = 12.5; cam.fov = FOV_BASE; cam.mode = 'lounge';
   camPos.set(me.x, 10, me.z + 10);
 
   plTipOff = false;                  // 새 방에서는 다시 알려 준다
@@ -2349,6 +2389,59 @@ const keys = Object.create(null);
 let typing = false;
 const drag = { on: false, moved: 0, lx: 0, ly: 0, t0: 0, button: 0 };
 
+/* ---- 확대·축소 ------------------------------------------------------
+ *  3인칭은 카메라를 멀리/가까이(cam.dist), 1인칭은 화각을 넓게/좁게(cam.fov).
+ *  마우스는 휠, 손가락은 두 개로 오므리고 펼친다. 둘 다 여기를 거친다.
+ * ------------------------------------------------------------------ */
+const DIST_MIN = 5, DIST_MAX = 22;
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+/* r > 1 이면 당겨 본다(확대). 바꾼 게 있으면 true */
+function zoomBy(r) {
+  if (!(r > 0) || !isFinite(r)) return false;
+  if (cam.mode === 'watch') {
+    const was = cam.fov;
+    cam.fov = clamp(cam.fov / r, FOV_MIN, FOV_MAX);
+    if (cam.fov !== was) showZoom();
+    return true;
+  }
+  if (cam.mode === 'lounge') {
+    cam.dist = clamp(cam.dist / r, DIST_MIN, DIST_MAX);
+    return true;
+  }
+  return false;                       // 전체화면은 화면에 꽉 맞춘 상태라 손대지 않는다
+}
+
+/* 손가락이 두 개일 때만 핀치다. 하나는 둘러보기(드래그)로 남겨 둔다. */
+const touches = new Map();            // pointerId -> {x, y}
+const pinch = { on: false, d0: 0, dist0: 0, fov0: 0 };
+
+function pinchSpan() {
+  const it = Array.from(touches.values());
+  if (it.length < 2) return 0;
+  return Math.hypot(it[0].x - it[1].x, it[0].y - it[1].y);
+}
+function pinchStart() {
+  pinch.d0 = pinchSpan();
+  if (pinch.d0 < 12) return;          // 너무 붙어 있으면 비율이 튄다
+  pinch.on = true;
+  pinch.dist0 = cam.dist;
+  pinch.fov0 = cam.fov;
+  drag.on = false;                    // 두 손가락은 확대지 둘러보기가 아니다
+}
+function pinchMove() {
+  const d = pinchSpan();
+  if (!pinch.on || !d) return;
+  const r = d / pinch.d0;             // 벌리면 1보다 커진다 = 확대
+  if (cam.mode === 'watch') {
+    const was = cam.fov;
+    cam.fov = clamp(pinch.fov0 / r, FOV_MIN, FOV_MAX);
+    if (cam.fov !== was) showZoom();
+  } else if (cam.mode === 'lounge') {
+    cam.dist = clamp(pinch.dist0 / r, DIST_MIN, DIST_MAX);
+  }
+}
+
 const chatInput = $('chatInput');
 chatInput.addEventListener('focus', () => { typing = true; clearUnread(); });
 chatInput.addEventListener('blur', () => { typing = false; });
@@ -2403,25 +2496,42 @@ window.addEventListener('keydown', (e) => {
   if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].indexOf(k) >= 0) e.preventDefault();
 });
 window.addEventListener('keyup', (e) => { keys[e.key.toLowerCase()] = false; });
-window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; drag.on = false; });
+window.addEventListener('blur', () => {
+  for (const k in keys) keys[k] = false;
+  drag.on = false;
+  // 창 밖에서 손을 떼면 pointerup 이 안 온다 — 남은 기록을 털지 않으면
+  // 다음에 한 손가락만 올려도 핀치로 잡힌다
+  touches.clear(); pinch.on = false;
+});
 
 const canvas = renderer.domElement;
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
+/* 휠 — 3인칭은 카메라를 멀리/가까이, 1인칭은 화각을 넓게/좁게.
+ * 둘 다 '아래로 굴리면 멀어진다' 로 방향을 맞춘다.
+ * 화각은 더하기가 아니라 곱하기로 움직인다 — 많이 당겨 놓았을수록
+ * 한 칸이 곱게 들어와야 미세 조정이 된다. */
 canvas.addEventListener('wheel', (e) => {
-  if (screen !== 'room' || cam.mode !== 'lounge') return;
-  e.preventDefault();
-  cam.dist = Math.max(5, Math.min(22, cam.dist + Math.sign(e.deltaY) * 1.1));
+  if (screen !== 'room') return;
+  // 위로 굴리면 당겨 보고, 아래로 굴리면 물러난다 (3인칭·1인칭 같은 방향)
+  if (zoomBy(Math.exp(-Math.sign(e.deltaY) * 0.11))) e.preventDefault();
 }, { passive: false });
 
 canvas.addEventListener('pointerdown', (e) => {
   if (screen !== 'room') return;
+  touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (touches.size >= 2) { pinchStart(); return; }        // 두 번째 손가락 — 확대로 바꾼다
   drag.on = true; drag.moved = 0; drag.lx = e.clientX; drag.ly = e.clientY;
   drag.t0 = performance.now(); drag.button = e.button;
   if (canvas.setPointerCapture) canvas.setPointerCapture(e.pointerId);
 });
 
 window.addEventListener('pointermove', (e) => {
+  if (touches.has(e.pointerId)) {
+    const t = touches.get(e.pointerId);
+    t.x = e.clientX; t.y = e.clientY;
+  }
+  if (pinch.on) { pinchMove(); return; }
   if (!drag.on || screen !== 'room') return;
   const dx = e.clientX - drag.lx, dy = e.clientY - drag.ly;
   drag.lx = e.clientX; drag.ly = e.clientY;
@@ -2437,7 +2547,16 @@ window.addEventListener('pointermove', (e) => {
   }
 });
 
+/* 손가락 하나가 떨어지면 핀치는 끝. 남은 하나로 둘러보기를 다시 시작하지는
+ * 않는다 — 벌린 채로 떼는 중에 화면이 홱 돌아가 버린다. */
+function pointerGone(e) {
+  touches.delete(e.pointerId);
+  if (touches.size < 2) pinch.on = false;
+}
+window.addEventListener('pointercancel', pointerGone);
+
 window.addEventListener('pointerup', (e) => {
+  pointerGone(e);
   if (!drag.on) return;
   drag.on = false;
   if (screen !== 'room') return;
@@ -2647,7 +2766,9 @@ function updateViewUI() {
   const mode = cam.mode;
   const btn = $('viewBtn');
   const label = mode === 'watch' ? '1인칭 시점' : mode === 'cinema' ? '전체화면' : '3인칭 시점';
-  btn.classList.toggle('on', mode !== 'lounge');
+  // 어느 시점이든 켜진 모양으로 둔다. 3인칭만 꺼진 듯 보이면 기본값이 아니라
+  // '시점 기능이 꺼져 있다' 로 읽힌다 — 지금 어느 시점인지는 툴팁과 드롭다운이 알린다.
+  btn.classList.add('on');
   // 눈 아이콘이라 글자가 없다 — 지금 시점은 툴팁과 드롭다운 표시로 알린다
   btn.title = '시점 — ' + label;
   btn.setAttribute('aria-label', '시점 — ' + label);
@@ -2659,7 +2780,7 @@ function updateViewUI() {
   });
 }
 
-function setWatchMode(on) {
+function setWatchMode(on, quiet) {
   if (on === (cam.mode === 'watch')) return;
   if (on && cam.mode === 'cinema') {        // 시네마와 겹치지 않게 먼저 해제
     document.body.classList.remove('cinema');
@@ -2667,15 +2788,19 @@ function setWatchMode(on) {
   }
   cam.mode = on ? 'watch' : 'lounge';
   document.body.classList.toggle('watching', on);
+  cam.fov = FOV_BASE;                      // 들고 날 때 배율은 초기화
+  hideZoom();
   if (on) {
     const t = world.tvTransform;
     cam.yaw = Math.atan2(t.x - me.x, t.z - me.z);
     cam.look = 0.05;
-    toast('1인칭 시점 — 드래그로 둘러보기, V 또는 Esc 로 나가기', 3600);
+    toast('1인칭 시점 — 드래그로 둘러보기 · ' + zoomHow() + ' · V 또는 Esc 로 나가기', 3800);
   } else {
     // 라운지 뷰는 카메라가 아바타를 '마주 보는' 구조라, 시청 모드에서 보던 방향을
     // 그대로 바라보려면 공전 각을 180° 돌려 준다.
     cam.yaw += Math.PI;
+    // 전체화면으로 건너가는 길에 잠깐 들르는 것뿐이면 안내하지 않는다
+    if (!quiet) toast('3인칭 시점 — 드래그로 둘러보기 · ' + zoomHow(), 3200);
   }
   updateViewUI();
 }
@@ -2722,11 +2847,11 @@ function exitFS() {
 function setCinema(on) {
   const want = !!on;
   if (want === (cam.mode === 'cinema')) return;
-  if (want && cam.mode === 'watch') setWatchMode(false);   // 시청 모드와 겹치지 않게
+  if (want && cam.mode === 'watch') setWatchMode(false, true);   // 시청 모드와 겹치지 않게
   cam.mode = want ? 'cinema' : 'lounge';
   document.body.classList.toggle('cinema', want);
   if (want) { toast('전체화면 — 영상이 화면을 채웁니다. Esc 로 나가기', 3200); requestFS(); }
-  else { exitFS(); }
+  else { exitFS(); toast('3인칭 시점 — 드래그로 둘러보기 · ' + zoomHow(), 3200); }
   updateViewUI();
 }
 function onFsChange() {
@@ -2844,6 +2969,17 @@ function update(dt, now) {
   }
 
   updateDarts(dt);
+
+  /* 화각을 목표치로 부드럽게 옮긴다. 1인칭이 아닐 때는 늘 기본값으로
+   * 되돌아간다 — 당겨 둔 채로 3인칭·전체화면에 가면 프레이밍이 깨진다. */
+  {
+    const want = (cam.mode === 'watch') ? cam.fov : FOV_BASE;
+    if (Math.abs(camera.fov - want) > 0.01) {
+      camera.fov += (want - camera.fov) * Math.min(1, dt * 14);
+      if (Math.abs(camera.fov - want) < 0.02) camera.fov = want;
+      camera.updateProjectionMatrix();
+    }
+  }
 
   /* 카메라 */
   const aim = new THREE.Vector3();

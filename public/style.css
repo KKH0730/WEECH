@@ -869,6 +869,22 @@ body.cinema #playerbar:hover{opacity:1;}
 }
 #topDock > *{pointer-events:auto;}
 
+/* 1인칭 배율 — 화면 오른쪽 한가운데. 휠을 굴리는 동안만 보인다 */
+#zoomPill{
+  position:absolute;right:clamp(10px,1.6vw,20px);top:50%;transform:translateY(-50%);
+  z-index:28;pointer-events:none;
+  font-size:clamp(11px,1.05vw,14px);font-weight:700;letter-spacing:.03em;
+  font-variant-numeric:tabular-nums;
+  padding:0.42em 0.8em;border-radius:999px;
+  background:var(--glass);border:1px solid rgba(255,184,77,.35);color:var(--accent);
+  backdrop-filter:blur(10px);box-shadow:0 0 16px rgba(255,184,77,.12);
+  animation:popIn .2s ease both;
+}
+#zoomPill[hidden]{display:none;}
+#zoomPill.wide{border-color:rgba(140,190,255,.4);color:#9fc6ff;box-shadow:0 0 16px rgba(140,190,255,.12);}
+#zoomPill.out{animation:zpFade .7s ease forwards;}
+@keyframes zpFade{from{opacity:1}to{opacity:0}}
+
 #modePill{
   flex:none;font-size:1em;
   display:flex;align-items:center;gap:0.55em;white-space:nowrap;
