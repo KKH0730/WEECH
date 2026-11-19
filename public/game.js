@@ -8,7 +8,7 @@
 import * as THREE from 'three';
 import { CSS3DRenderer } from './vendor/CSS3DRenderer.js';
 import { buildScene } from './scene3d.js';
-import { makeAvatar, colorOf } from './avatar3d.js';
+import { makeAvatar, colorOf, WARDROBE, sanitizeLook, lookOf } from './avatar3d.js';
 import * as TV from './youtube.js';
 import * as Voice from './voice.js';
 import * as Pitch from './pitch.js';
@@ -91,6 +91,17 @@ const me = {
 };
 const others = new Map();
 let myAvatar = null;
+
+/* ---- 내가 꾸민 모습 --------------------------------------------------
+ *  번호 일곱 개짜리 배열. 이 브라우저에 저장하고, 방에 들어갈 때 같이
+ *  보내 남들 화면에서도 같은 모습으로 선다. */
+const LOOK_KEY = 'weech.look';
+let myLook = null;
+try { myLook = sanitizeLook(JSON.parse(localStorage.getItem(LOOK_KEY) || 'null')); } catch (e) { /* 무시 */ }
+
+function saveLook() {
+  try { localStorage.setItem(LOOK_KEY, JSON.stringify(myLook)); } catch (e) { /* 사생활 모드 등 */ }
+}
 let room = null, isHost = false;
 let mode = 'cinema';                               // Play 모드 — 'cinema' | 'karaoke'
 let karaoke = false;                               // mode === 'karaoke' 를 줄여 쓴 것
@@ -345,7 +356,7 @@ function connect() {
     while (outbox.length) ws.send(JSON.stringify(outbox.shift()));
     if (screen === 'room' && lastJoin) {
       // 소켓만 끊겼던 경우 — 토큰이 있으면 원래 자리로 돌아간다
-      ws.send(JSON.stringify({ t: 'join', code: lastJoin.code, name: lastJoin.name, token: lastJoin.token }));
+      ws.send(JSON.stringify({ t: 'join', code: lastJoin.code, name: lastJoin.name, token: lastJoin.token, look: myLook }));
       return;
     }
     const seat = loadSeat();
@@ -354,7 +365,7 @@ function connect() {
       rejoining = true;
       me.name = seat.name;
       lastJoin = seat;
-      ws.send(JSON.stringify({ t: 'join', code: seat.code, name: seat.name, token: seat.token }));
+      ws.send(JSON.stringify({ t: 'join', code: seat.code, name: seat.name, token: seat.token, look: myLook }));
     }
   };
   ws.onclose = () => { if (screen === 'room') toast('연결이 끊어졌습니다. 다시 잇는 중…', 4000); scheduleRetry(); };
@@ -462,6 +473,13 @@ function connect() {
         removeOther(m.id);
         logMsg(esc(m.name || '누군가') + ' 님이 나갔습니다.', 'sys');
         break;
+
+      case 'look': {
+        if (m.id === myId) break;            // 내 것은 이미 입었다
+        const g = others.get(m.id);
+        if (g) redress(g, m.v);
+        break;
+      }
 
       case 'seat': {
         if (m.id === myId) {
@@ -958,7 +976,7 @@ function send(obj) {
 /* ------------------------------------------------------------------ */
 function addOther(u) {
   if (karaoke) setTimeout(syncVoicePeers, 0);
-  const av = makeAvatar({ name: u.name, seed: u.id, isMe: false });
+  const av = makeAvatar({ name: u.name, seed: u.id, isMe: false, look: u.look });
   scene.add(av.root);
   av.hitMeshes.forEach((mesh) => hitToPlayer.set(mesh.uuid, u.id));
   if (u.gone) av.setGone(true);
@@ -969,6 +987,28 @@ function addOther(u) {
   };
   others.set(u.id, g);
   return g;
+}
+
+/* 모습이 바뀌면 통째로 다시 짓는다. 재질·머리 모양이 다 달라지므로
+ * 부분만 갈아 끼우는 것보다 명료하다 — 자리·이름·상태는 그대로 넘긴다. */
+function redress(g, look) {
+  const old = g.av;
+  old.hitMeshes.forEach((m) => hitToPlayer.delete(m.uuid));
+  scene.remove(old.root);
+  old.dispose();
+  g.look = look;
+  g.av = makeAvatar({ name: g.name, seed: g.id, isMe: false, look: look });
+  scene.add(g.av.root);
+  g.av.hitMeshes.forEach((m) => hitToPlayer.set(m.uuid, g.id));
+  if (g.gone) g.av.setGone(true);
+}
+
+function redressMe() {
+  if (!myAvatar) return;
+  scene.remove(myAvatar.root);
+  myAvatar.dispose();
+  myAvatar = makeAvatar({ name: me.name, seed: myId, isMe: true, look: myLook });
+  scene.add(myAvatar.root);
 }
 
 function removeOther(id) {
@@ -997,7 +1037,7 @@ function enterRoom() {
   $('roomTitle').textContent = room.title;
   $('roomCode').textContent = room.code;
 
-  myAvatar = makeAvatar({ name: me.name, seed: myId, isMe: true });
+  myAvatar = makeAvatar({ name: me.name, seed: myId, isMe: true, look: myLook });
   scene.add(myAvatar.root);
 
   cam.yaw = 0; cam.pitch = 0.88; cam.dist = 12.5; cam.fov = FOV_BASE; cam.mode = 'lounge';
@@ -1071,6 +1111,172 @@ const inviteUrl = () => location.origin + '/?r=' + (room ? room.code : '');
  *  공유는 입장 코드 칩이 넓어 별도 패널로 띄우되, 같은 ⚙ 아래에 붙인다.
  * ------------------------------------------------------------------ */
 const shareDrop = $('shareDrop');
+/* ---- 아바타 꾸미기 (탈의실) -------------------------------------------
+ *  버튼 왼쪽으로 창이 열린다. 왼쪽 칸에는 '입어 보는 중' 인 내 모습이
+ *  천천히 돌고, 오른쪽 칸에는 선택지가 실물 사진(그 모습을 입힌 아바타를
+ *  작게 찍은 것)으로 늘어선다. 누르면 왼쪽 모습에만 임시로 입혀지고,
+ *  [입기] 를 눌러야 방 전원에게 퍼진다 — 취소하면 없던 일이 된다.
+ *
+ *  선택지는 옷장(WARDROBE)에서 읽어 와 그리므로 옷장을 늘리면 창이
+ *  저절로 따라온다.
+ * ------------------------------------------------------------------ */
+const lookBtn = $('lookBtn'), lookDrop = $('lookDrop');
+
+let draft = null;                    // 입어 보는 중인 모습 (입기 전까지 나만 본다)
+let prR = null, thR = null;          // 무대 · 사진기 렌더러 (열 때 한 번 만든다)
+let prScene = null, prCam = null, prAv = null, prRaf = 0;
+
+function prInit() {
+  if (prR) return;
+  prR = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  prR.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  prR.outputColorSpace = THREE.SRGBColorSpace;
+  $('lookStage').appendChild(prR.domElement);
+  prScene = new THREE.Scene();
+  /* 방 조명과 무관하게 밝게 — 탈의실 거울은 환해야 한다 */
+  prScene.add(new THREE.AmbientLight(0xffffff, 0.95));
+  const dl = new THREE.DirectionalLight(0xfff2e0, 0.65);
+  dl.position.set(-1.5, 2.5, 2);
+  prScene.add(dl);
+  prCam = new THREE.PerspectiveCamera(32, 0.8, 0.1, 10);
+
+  thR = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  thR.setSize(76, 76);
+  thR.outputColorSpace = THREE.SRGBColorSpace;
+}
+
+/* 무대 위 모습을 draft 로 갈아입힌다 */
+function prDress() {
+  if (prAv) { prScene.remove(prAv.root); prAv.dispose(); prAv = null; }
+  prAv = makeAvatar({ seed: myId || 1, name: '', look: draft });
+  prAv.root.traverse((o) => { if (o.isSprite) o.visible = false; });   // 이름표는 거울에 안 비친다
+  prScene.add(prAv.root);
+}
+
+/* 그 선택지를 입힌 모습을 작게 찍는다 — 눈은 얼굴을, 옷은 몸통을 당겨 찍는다 */
+const TH_SHOT = {
+  face: { y: 1.34, z: 0.9, ty: 1.3, fov: 26 },
+  head: { y: 1.3, z: 1.5, ty: 1.15, fov: 32 },
+  torso: { y: 0.95, z: 1.25, ty: 0.88, fov: 30 },
+  lower: { y: 0.5, z: 1.45, ty: 0.4, fov: 32 }
+};
+
+function thumb(look, focus) {
+  const sc = new THREE.Scene();
+  sc.add(new THREE.AmbientLight(0xffffff, 1.0));
+  const dl = new THREE.DirectionalLight(0xfff2e0, 0.5);
+  dl.position.set(-1, 2, 2);
+  sc.add(dl);
+  const av = makeAvatar({ seed: myId || 1, name: '', look: look });
+  av.root.traverse((o) => { if (o.isSprite) o.visible = false; });
+  av.root.rotation.y = 0.25;
+  sc.add(av.root);
+  const f = TH_SHOT[focus];
+  const cam = new THREE.PerspectiveCamera(f.fov, 1, 0.1, 10);
+  cam.position.set(0.1, f.y, f.z);
+  cam.lookAt(0, f.ty, 0);
+  thR.render(sc, cam);
+  const url = thR.domElement.toDataURL();
+  av.dispose();
+  return url;
+}
+
+/*  slot — look 배열에서 몇 번째 칸을 바꾸는가 */
+const LOOK_ROWS = [
+  { slot: 0, label: '눈 모양', kind: 'thumb', focus: 'face', n: WARDROBE.eyes },
+  { slot: 1, label: '헤어스타일', kind: 'thumb', focus: 'head', n: WARDROBE.hairs.length },
+  { slot: 6, label: '머리 색', kind: 'color', colors: WARDROBE.hairColors },
+  { slot: 2, label: '피부색', kind: 'color', colors: WARDROBE.skins },
+  { slot: 7, label: '상의', kind: 'thumb', focus: 'torso', n: WARDROBE.topStyles.length },
+  { slot: 3, label: '상의 색', kind: 'color', colors: WARDROBE.tops },
+  { slot: 8, label: '하의', kind: 'thumb', focus: 'lower', n: WARDROBE.bottomStyles.length },
+  { slot: 4, label: '하의 색', kind: 'color', colors: WARDROBE.bottoms },
+  { slot: 5, label: '신발', kind: 'color', colors: WARDROBE.shoes }
+];
+
+function renderLookRows() {
+  const hx = (v) => '#' + (v >>> 0).toString(16).padStart(6, '0');
+  $('lookRows').innerHTML = LOOK_ROWS.map(function (row) {
+    const cur = draft[row.slot] || 0;
+    let opts = '';
+    if (row.kind === 'color') {
+      opts = row.colors.map(function (c, k) {
+        return '<button class="lk-sw' + (k === cur ? ' on' : '') + '" data-s="' + row.slot +
+          '" data-k="' + k + '" style="background:' + hx(c) + '"></button>';
+      }).join('');
+    } else {
+      for (let k = 0; k < row.n; k++) {
+        const v = draft.slice();
+        v[row.slot] = k;
+        opts += '<button class="lk-th' + (k === cur ? ' on' : '') + '" data-s="' + row.slot +
+          '" data-k="' + k + '"><img src="' + thumb(v, row.focus) + '" alt=""></button>';
+      }
+    }
+    return '<div class="lk-row"><div class="lk-label">' + row.label + '</div>' +
+      '<div class="lk-opts">' + opts + '</div></div>';
+  }).join('');
+}
+
+function prLoop(ts) {
+  if (lookDrop.hidden) { prRaf = 0; return; }
+  const t = ts / 1000;
+  if (prAv) {
+    //  좌우로 천천히 몸을 틀어 가며 보여 준다
+    prAv.update({ x: 0, y: 0, z: 0, dir: Math.sin(t * 0.6) * 0.55 + 0.1, st: 0, fy: 0 }, 0.016, t, false);
+  }
+  prR.render(prScene, prCam);
+  prRaf = requestAnimationFrame(prLoop);
+}
+
+function openLook(open) {
+  lookDrop.hidden = !open;
+  lookBtn.classList.toggle('open', open);
+  lookBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  if (!open) {
+    if (prAv) { prScene.remove(prAv.root); prAv.dispose(); prAv = null; }
+    return;
+  }
+  openSet(false); openShare(false);
+  prInit();
+  //  지금 실제 모습에서 시작한다 — 안 꾸몄으면 이름이 정해 준 그 모습
+  draft = sanitizeLook(myLook) || lookOf(myId || 1);
+  const box = $('lookStage').getBoundingClientRect();
+  prR.setSize(Math.max(140, box.width), Math.max(180, box.height));
+  prCam.aspect = Math.max(140, box.width) / Math.max(180, box.height);
+  prCam.position.set(0, 1.0, 3.2);
+  prCam.lookAt(0, 0.9, 0);
+  prCam.updateProjectionMatrix();
+  prDress();
+  renderLookRows();
+  if (!prRaf) prRaf = requestAnimationFrame(prLoop);
+}
+
+lookBtn.addEventListener('click', function (e) {
+  e.stopPropagation();
+  openLook(lookDrop.hidden);
+});
+lookDrop.addEventListener('click', function (e) { e.stopPropagation(); });
+document.addEventListener('click', function () { if (!lookDrop.hidden) openLook(false); });
+
+$('lookRows').addEventListener('click', function (e) {
+  const b = e.target.closest('button[data-s]');
+  if (!b) return;
+  draft[+b.dataset.s] = +b.dataset.k;
+  draft = sanitizeLook(draft);
+  prDress();                 // 무대 위에만 입혀 본다 — 방에는 아직 안 퍼진다
+  renderLookRows();          // 사진들도 새 조합 기준으로 다시 찍는다
+});
+
+$('lookSave').addEventListener('click', function () {
+  myLook = draft.slice();
+  saveLook();
+  redressMe();
+  send({ t: 'look', v: myLook });
+  openLook(false);
+  toast('새 모습으로 갈아입었습니다', 2200);
+});
+$('lookCancel').addEventListener('click', function () { openLook(false); });
+
 const setBtn = $('setBtn'), setDrop = $('setDrop');
 
 function syncSetBtn() {

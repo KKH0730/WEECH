@@ -770,6 +770,7 @@ function handleMessage(entry, m, now) {
       };
       rooms.set(code, room);
       const u = admit(entry, room, name);
+      u.look = cleanLook(m.look);
       room.hostId = u.id;
       conn.send({ t: 'joined', you: u.id, name: u.name, token: u.token, host: room.hostId, room: roomPayload(room), users: userList(room) });
       if (res.truncated) conn.send({ t: 'info', msg: '재생목록이 길어 ' + MAX_PLAYLIST + '곡까지만 담았습니다.' });
@@ -842,6 +843,7 @@ function handleMessage(entry, m, now) {
     if (room.users.size >= ROOM_CAP) { conn.send({ t: 'err', msg: '방이 가득 찼습니다. (' + ROOM_CAP + '명)' }); return; }
     const name = clean(m.name, 12) || randomName(room);
     const u = admit(entry, room, name);
+    u.look = cleanLook(m.look);          // 들어오자마자 제 모습으로 서게
     conn.send({ t: 'joined', you: u.id, name: u.name, token: u.token, host: room.hostId, room: roomPayload(room), users: userList(room), seats: seatMap(room) });
     broadcast(room, { t: 'user+', user: pubUser(u) }, u.id);
     pushLobby();
@@ -927,6 +929,18 @@ function handleMessage(entry, m, now) {
         room.pgame = false;
       }
       broadcast(room, { t: 'mode', v: v, by: user.name, pgame: !!room.pgame });
+      return;
+    }
+
+    /* 꾸민 모습 바꾸기 — 전원에게 알린다. 자리는 없고 생김새만 바뀌므로
+     * 방장 권한이 필요 없다. 연타로 방을 도배하지 않게만 막는다. */
+    case 'look': {
+      const v = cleanLook(m.v);
+      if (!v) return;
+      if (now - user.lastLook < 400) return;
+      user.lastLook = now;
+      user.look = v;
+      broadcast(room, { t: 'look', id: user.id, v: v });
       return;
     }
 
@@ -1113,6 +1127,22 @@ function handleMessage(entry, m, now) {
   }
 }
 
+/* 꾸민 모습 — 번호 아홉 개짜리 배열. 뜻은 클라이언트(avatar3d)가 알고,
+ * 서버는 '숫자 일곱 개, 0~15' 로만 줄 세워 중계한다. 범위를 느슨하게 둔
+ * 건 옷장이 늘어나도 서버를 안 고치게 하려는 것 — 어긋난 번호는 받는
+ * 쪽이 0 으로 접는다. */
+function cleanLook(v) {
+  if (!Array.isArray(v)) return null;
+  const out = [];
+  for (let i = 0; i < 9; i++) {
+    let n = Number(v[i]);
+    if (!isFinite(n)) n = 0;
+    n = n | 0;
+    out.push(n < 0 ? 0 : (n > 15 ? 15 : n));
+  }
+  return out;
+}
+
 function clampNum(v, lo, hi) {
   const n = Number(v);
   if (!isFinite(n)) return 0;
@@ -1123,6 +1153,7 @@ function admit(entry, room, name) {
   const u = {
     id: nextUserId++, name: name, conn: entry.conn, room: room,
     token: crypto.randomBytes(12).toString('hex'), gone: 0, graceTimer: null, seat: -1,
+    look: null, lastLook: 0,
     x: 600 + (Math.random() - 0.5) * 240, y: 760 + (Math.random() - 0.5) * 80,
     dir: -Math.PI / 2, st: 0, h: 0, joinedAt: Date.now(),
     mic: false,                      // 본인이 마이크를 켰나
@@ -1135,7 +1166,7 @@ function admit(entry, room, name) {
 
 const pubUser = (u) => ({
   id: u.id, name: u.name, x: Math.round(u.x), y: Math.round(u.y),
-  gone: u.gone ? 1 : 0, seat: u.seat, mic: u.mic ? 1 : 0
+  gone: u.gone ? 1 : 0, seat: u.seat, mic: u.mic ? 1 : 0, look: u.look
 });
 const userList = (r) => Array.from(r.users.values()).map(pubUser);
 

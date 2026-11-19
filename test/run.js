@@ -24,6 +24,7 @@ const SUITES = [
   { file: 'name_test.js', name: '이름 자동부여·바꾸기', needsServer: true },
   { file: 'room_test.js', name: 'Play 모드·마이크·권한', needsServer: true },
   { file: 'empty_test.js', name: '링크 없이 만든 빈 방', needsServer: true },
+  { file: 'look_test.js', name: '아바타 꾸미기 중계', needsServer: true },
   { file: 'pgame_test.js', name: '음정 게임모드', needsServer: true, needsNet: true }
 ];
 

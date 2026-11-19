@@ -212,17 +212,60 @@ if (npc) {
     npc.NPCS.every((n) => n.hellos.length >= 2 && typeof npc.helloOf(n) === 'string'));
 }
 
+console.log('\n── 옷장 (아바타 꾸미기) ──');
+{
+  const W = avatar3d.WARDROBE;
+  ok('옷장이 열려 있다', !!W && Array.isArray(W.tops),
+    W ? '상의 ' + W.tops.length + ' · 하의 ' + W.bottoms.length + ' · 피부 ' + W.skins.length : '없음');
+
+  /* 밖에서 온 값은 뭐가 와도 줄 세워져야 한다 — 서버가 범위를 느슨하게
+   * 중계하므로 어긋난 번호를 접는 건 전적으로 이쪽 몫이다. */
+  const dirty = avatar3d.sanitizeLook([99, -3, 'x', null, 2.7, 1e9, NaN]);
+  ok('어긋난 번호를 접는다', Array.isArray(dirty) &&
+    dirty.every((n, i) => Number.isInteger(n) && n >= 0), JSON.stringify(dirty));
+  ok('배열이 아니면 null', avatar3d.sanitizeLook('abc') === null && avatar3d.sanitizeLook(null) === null);
+  ok('기본 모습은 이름에서 늘 같게',
+    JSON.stringify(avatar3d.lookOf('가나다')) === JSON.stringify(avatar3d.lookOf('가나다')));
+
+  /* 고른 대로 입는가 — 상의 색과 머리 모양이 실제로 갈리는지 */
+  const colorsOf = (av) => {
+    const set = new Set();
+    av.root.traverse((o) => { if (o.isMesh && o.material && o.material.color) set.add(o.material.color.getHex()); });
+    return set;
+  };
+  const a1 = avatar3d.makeAvatar({ seed: 'x', name: 'x', look: [0, 0, 0, 0, 0, 0, 0] });
+  const a2 = avatar3d.makeAvatar({ seed: 'x', name: 'x', look: [0, 0, 0, 3, 0, 0, 0] });
+  ok('상의 번호를 바꾸면 색이 바뀐다',
+    colorsOf(a1).has(W.tops[0]) && !colorsOf(a2).has(W.tops[0]) && colorsOf(a2).has(W.tops[3]));
+
+  const count = (av) => { let n = 0; av.root.traverse((o) => { if (o.isMesh) n++; }); return n; };
+  const long1 = avatar3d.makeAvatar({ seed: 'x', name: 'x', look: [0, 0, 0, 0, 0, 0, 0] });
+  const bob = avatar3d.makeAvatar({ seed: 'x', name: 'x', look: [0, 1, 0, 0, 0, 0, 0] });
+  const bun = avatar3d.makeAvatar({ seed: 'x', name: 'x', look: [0, 2, 0, 0, 0, 0, 0] });
+  ok('머리 모양마다 생김이 다르다 (긴머리=갈래, 올림=묶음)',
+    count(long1) === count(bob) + 2 && count(bun) === count(bob) + 1,
+    '긴 ' + count(long1) + ' · 단발 ' + count(bob) + ' · 올림 ' + count(bun));
+  /* 옷 모양 — 치마·바지·반바지가 기하부터 다른지. 치마만 돌림판이 있다 */
+  const skirted = avatar3d.makeAvatar({ seed: 'x', name: 'x', look: [0,0,0,0,0,0,0,0,0] });
+  const pants = avatar3d.makeAvatar({ seed: 'x', name: 'x', look: [0,0,0,0,0,0,0,0,1] });
+  const hasLathe = (av) => { let n = false; av.root.traverse((o) => { if (o.isMesh && o.geometry.type === 'LatheGeometry') n = true; }); return n; };
+  ok('치마에만 돌림판이 있다', hasLathe(skirted) && !hasLathe(pants));
+  ok('모양 칸까지 아홉 칸이다', avatar3d.sanitizeLook([]).length === 9);
+  [a1, a2, long1, bob, bun, skirted, pants].forEach((a) => a.dispose());
+}
+
 console.log('\n── 사람이 그려지는가 ──');
 let who = null;
 await step('makeAvatar()', () => {
-  who = avatar3d.makeAvatar({ seed: 'abc', name: '가나다' });
+  // 테두리는 치마 밑단에만 두르므로, 치마 차림으로 짓는다
+  who = avatar3d.makeAvatar({ seed: 'abc', name: '가나다', look: [0, 0, 0, 0, 0, 0, 0, 0, 0] });
   return who.root.children.length + '덩이';
 });
 ok('맞을 자리가 있다', !!who && who.hitMeshes.length > 0);
 // 사람에게는 손그림 선이 둘린다 (방에는 두르지 않는다)
 let lines = 0;
 if (who) who.root.traverse((o) => { if (o.userData && o.userData.isOutline) lines++; });
-ok('사람에게 테두리가 둘렸다', lines > 0, lines + '줄');
+ok('치마 밑단에 테두리가 둘렸다', lines > 0, lines + '줄');
 /* 테두리는 '사람' 에게만 두른다. 배경에 두르면 지브리가 아니라 만화가 된다.
  * 산타와 루돌프도 사람 쪽이므로 둘러야 맞다 — 가구·벽에만 없으면 된다. */
 const CHARACTERS = ['santa', 'deer'];

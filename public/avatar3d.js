@@ -73,12 +73,13 @@ function labelSprite(text, opts) {
   return spr;
 }
 
-function faceTexture(seed, shut, hairHex) {
+/* eyeKind 0~4 — 눈매 번호를 그대로 받는다 (전에는 씨앗에서 뽑았다) */
+function faceTexture(eyeKind, shut, hairHex) {
   const S = 256;
   const c = document.createElement('canvas');
   c.width = c.height = S;
   const g = c.getContext('2d');
-  const kind = Math.abs(seed) % 5;
+  const kind = Math.abs(eyeKind | 0) % 5;
   const hex = (v) => '#' + (v >>> 0).toString(16).padStart(6, '0');
 
   /* 눈은 얼굴의 거의 전부다. 크고, 눈꼬리가 살짝 올라간 아몬드꼴이고,
@@ -396,6 +397,63 @@ const FACE_PHI = Math.PI * 0.44;
 const FACE_THETA = Math.PI * 0.40;
 const FACE_TOP = Math.PI * 0.34;
 
+
+/* ---- 옷장 ----------------------------------------------------------
+ *  꾸미기 창이 보여 주는 선택지다. 서버와 다른 사람 화면은 '몇 번을
+ *  골랐나'(번호 여섯 개)만 주고받으므로, 여기 순서를 바꾸면 이미 저장된
+ *  모습이 전부 어긋난다 — 늘리는 건 되지만 끼워 넣거나 빼지 말 것.
+ *      look = [눈, 머리모양, 피부, 상의, 하의, 신발]
+ * ------------------------------------------------------------------ */
+export const WARDROBE = {
+  eyes: 5,                                     // faceTexture 의 눈매 가짓수
+  hairs: ['긴 생머리', '단발', '올림머리'],
+  topStyles: ['반팔', '긴팔', '민소매'],
+  bottomStyles: ['치마', '바지', '반바지'],
+  hairColors: [0x2b2a33, 0x4a3327, 0x8a5a2b, 0xb98a55, 0x6b4a6e, 0x9a9aa4],
+  skins: [0xffd8a9, 0xffe6c8, 0xf0be8a, 0xd99e6a, 0xa9754c],
+  tops: [0xff6b5c, 0x4fc3f7, 0x7ddc7d, 0xffd166, 0xc792ea, 0xff9ec4, 0xf2f2f2, 0x5f78e0],
+  bottoms: [0x3f4a5a, 0xf2f2f2, 0xe8d36a, 0x6fbf8f, 0xf0a0b8, 0x7a6ad9, 0xb98a55, 0x2b2a33],
+  shoes: [0x4a4038, 0xf4f1ea, 0xc0392b, 0x3f8ecc, 0x6fbf8f, 0xe0a92c]
+};
+/* look = [눈, 머리모양, 피부, 상의색, 하의색, 신발, 머리색, 상의모양, 하의모양] */
+const LOOK_MAX = [
+  WARDROBE.eyes, WARDROBE.hairs.length, WARDROBE.skins.length,
+  WARDROBE.tops.length, WARDROBE.bottoms.length, WARDROBE.shoes.length,
+  WARDROBE.hairColors.length, WARDROBE.topStyles.length, WARDROBE.bottomStyles.length
+];
+
+/* 번호 여섯(또는 일곱) 개로 줄 세운다 — 밖에서 온 값은 늘 이걸 거친다 */
+export function sanitizeLook(v) {
+  if (!Array.isArray(v)) return null;
+  const out = [];
+  for (let i = 0; i < LOOK_MAX.length; i++) {
+    let n = Number(v[i]);
+    if (!isFinite(n)) n = 0;
+    n = n | 0;
+    out.push(n < 0 ? 0 : (n >= LOOK_MAX[i] ? 0 : n));
+  }
+  return out;
+}
+
+/* 아무것도 안 고른 사람의 기본 모습 — 이름에서 뽑아 늘 같게 */
+export function lookOf(seed) {
+  let h = 0;
+  const str = String(seed);
+  for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) | 0;
+  h = Math.abs(h);
+  return [
+    h % WARDROBE.eyes,
+    h % WARDROBE.hairs.length,
+    (h >> 3) % 2,                              // 기본은 밝은 피부 둘 중 하나
+    h % WARDROBE.tops.length,
+    (h >> 2) % WARDROBE.bottoms.length,
+    (h >> 4) % WARDROBE.shoes.length,
+    h % WARDROBE.hairColors.length,
+    (h >> 5) % WARDROBE.topStyles.length,
+    (h >> 6) % WARDROBE.bottomStyles.length
+  ];
+}
+
 /* 사람은 방보다 훨씬 평평하게 칠한다.
  *  굴곡을 따라 명암이 줄줄 흐르면 깎은 나무처럼 보인다 — 목각인형 티의
  *  정체가 그것이다. 두 단짜리 띠로 '밝다 / 아주 살짝 어둡다' 만 남기면
@@ -418,20 +476,22 @@ function joint(x, y, z) {
 }
 
 export function makeAvatar(opts) {
-  const col = colorOf(opts.seed);
-  const main = flat(col[0]);                   // 윗옷
-  const dark = flat(col[1]);                   // 치마
-  const hairMat = flat(col[2] || col[1]);
-  /* 동숲 피부 — 창백한 크림색이 아니라 따뜻한 복숭아빛이다 */
-  const skin = flat(0xffd8a9);
-  const shoe = flat(0x4a4038);
+  /* 입을 것 — 직접 고른 look 이 있으면 그걸, 없으면 이름에서 뽑는다 */
+  const look = sanitizeLook(opts.look) || lookOf(opts.seed);
+  const W = WARDROBE;
+  const main = flat(W.tops[look[3]]);          // 상의
+  const dark = flat(W.bottoms[look[4]]);       // 하의(치마)
+  const hairHex = W.hairColors[look[6] || 0];
+  const hairMat = flat(hairHex);
+  const skin = flat(W.skins[look[2]]);
+  const shoe = flat(W.shoes[look[5]]);
   const white = flat(0xf7f3ec);
 
   let seedNum = 0;
   const sstr = String(opts.seed);
   for (let i = 0; i < sstr.length; i++) seedNum = (seedNum * 31 + sstr.charCodeAt(i)) | 0;
-  const faceOpen = faceTexture(seedNum, false, col[2] || col[1]);
-  const faceShut = faceTexture(seedNum, true, col[2] || col[1]);
+  const faceOpen = faceTexture(look[0], false, hairHex);
+  const faceShut = faceTexture(look[0], true, hairHex);
   const faceMat = new THREE.MeshToonMaterial({
     map: faceOpen, emissive: 0xffffff, emissiveMap: faceOpen, emissiveIntensity: 0.3,
     gradientMap: RAMP_FLAT, transparent: true, depthWrite: false
@@ -441,18 +501,35 @@ export function makeAvatar(opts) {
   const body = new THREE.Group();
   root.add(body);
 
-  /* 치마 — 허리에서 밑단으로 벌어지는 A라인. 돌림판(lathe)으로 깎는다 */
-  const skirtPts = [];
-  for (let i = 0; i <= 10; i++) {
-    const t = i / 10;
-    skirtPts.push(new THREE.Vector2(
-      0.145 + 0.165 * Math.pow(t, 1.2),        // 반지름 — 아래로 갈수록 벌어진다
-      0.74 - 0.36 * t                           // 높이 0.74 → 0.38 (무릎께)
-    ));
+  /* 하의 — 모양에 따라 실루엣이 갈린다.
+   *   0 치마   A라인 돌림판. 다리는 맨살
+   *   1 바지   치마 없이 다리 전체가 하의 색
+   *   2 반바지 허벅지만 하의 색, 종아리는 맨살 */
+  const bottomStyle = look[8] || 0;
+  if (bottomStyle === 0) {
+    const skirtPts = [];
+    for (let i = 0; i <= 10; i++) {
+      const t = i / 10;
+      skirtPts.push(new THREE.Vector2(
+        0.145 + 0.165 * Math.pow(t, 1.2),      // 반지름 — 아래로 갈수록 벌어진다
+        0.74 - 0.36 * t                         // 높이 0.74 → 0.38 (무릎께)
+      ));
+    }
+    const skirt = new THREE.Mesh(new THREE.LatheGeometry(skirtPts, 40), dark);
+    body.add(skirt);
+    body.add(outlineOf(skirt, 0.04));          // 밑단의 어두운 테
   }
-  const skirt = new THREE.Mesh(new THREE.LatheGeometry(skirtPts, 40), dark);
-  body.add(skirt);
-  body.add(outlineOf(skirt, 0.04));            // 밑단의 어두운 테 — 레퍼런스의 그 선
+  if (bottomStyle !== 0) {
+    /* 치마가 없으면 골반이 비어 몸통과 다리가 떨어져 보인다 —
+     * 바지 엉덩이로 그 사이를 메운다 */
+    const pelvis = new THREE.Mesh(new THREE.CapsuleGeometry(0.155, 0.1, 12, 30), dark);
+    pelvis.position.y = 0.6;
+    pelvis.scale.set(1.02, 1, 0.9);
+    body.add(pelvis);
+  }
+  //  다리 색 — 바지면 발목까지, 반바지면 허벅지만 하의 색
+  const thighMat = bottomStyle === 0 ? skin : dark;
+  const shinMat = bottomStyle === 1 ? dark : skin;
 
   /* 윗옷 — 치마 위에 얹히는 작은 몸통. 목둘레에 흰 깃 */
   const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.16, 0.16, 14, 36), main);
@@ -470,11 +547,11 @@ export function makeAvatar(opts) {
      * 무릎에서 발(-0.26), 발 반높이(0.039)를 빼면 바닥이 0.001 —
      * 토막을 줄이면 그만큼 발이 공중에 뜬다. */
     const hip = joint(sgn * 0.068, 0.5, 0);
-    const thigh = new THREE.Mesh(new THREE.CapsuleGeometry(0.052, 0.12, 8, 20), skin);
+    const thigh = new THREE.Mesh(new THREE.CapsuleGeometry(0.052, 0.12, 8, 20), thighMat);
     thigh.position.y = -0.09; hip.add(thigh);
     const knee = joint(0, -0.20, 0);
     knee.rotation.x = 0.06;
-    const shin = new THREE.Mesh(new THREE.CapsuleGeometry(0.046, 0.14, 8, 20), skin);
+    const shin = new THREE.Mesh(new THREE.CapsuleGeometry(0.046, 0.14, 8, 20), shinMat);
     shin.position.y = -0.11; knee.add(shin);
     const foot = new THREE.Mesh(new THREE.SphereGeometry(0.065, 20, 14), shoe);
     foot.scale.set(1, 0.6, 1.5);
@@ -484,17 +561,23 @@ export function makeAvatar(opts) {
     legs.push({ hip, knee });
   }
 
-  /* 팔 — 몸에 붙여 가지런히. 소매 끝에 맨살 손 */
+  /* 팔 — 상의 모양에 따라 소매가 달라진다.
+   *   반팔   소매는 상의 색, 아래팔은 맨살 (기본)
+   *   긴팔   아래팔까지 상의 색
+   *   민소매 어깨부터 맨살 */
+  const topStyle = look[7] || 0;
+  const sleeveMat = topStyle === 2 ? skin : main;
+  const foreMat = topStyle === 1 ? main : skin;
   const arms = [];
   for (let sgn = -1; sgn <= 1; sgn += 2) {
     const sh = joint(sgn * 0.175, 1.0, 0);
     sh.rotation.z = sgn * 0.12;
     sh.rotation.x = -0.05;
-    const sleeve = new THREE.Mesh(new THREE.CapsuleGeometry(0.052, 0.07, 8, 20), main);
+    const sleeve = new THREE.Mesh(new THREE.CapsuleGeometry(0.052, 0.07, 8, 20), sleeveMat);
     sleeve.position.y = -0.06; sh.add(sleeve);
     const el = joint(0, -0.13, 0);
     el.rotation.x = 0.14;
-    const fore = new THREE.Mesh(new THREE.CapsuleGeometry(0.044, 0.05, 8, 20), skin);
+    const fore = new THREE.Mesh(new THREE.CapsuleGeometry(0.044, 0.05, 8, 20), foreMat);
     fore.position.y = -0.045; el.add(fore);
     const hand = new THREE.Mesh(new THREE.SphereGeometry(0.058, 18, 14), skin);
     hand.position.y = -0.1; el.add(hand);
@@ -532,20 +615,32 @@ export function makeAvatar(opts) {
     head.add(ear);
   }
 
-  /* 머리카락 — 두께 있는 덩어리 + 얼굴 양옆으로 내려오는 갈래 */
+  /* 머리카락 — 세 가지 모양. 어느 쪽이든 두께 있는 덩어리다.
+   *   0 긴 생머리  어깨 아래까지, 옆 갈래가 얼굴을 감싼다
+   *   1 단발      턱선에서 끝난다
+   *   2 올림머리  짧게 덮고 정수리에 묶는다 */
+  const hairStyle = look[1];
+  const hairLen = hairStyle === 0 ? 0.44 : (hairStyle === 1 ? 0.13 : 0.03);
   const hair = new THREE.Mesh(
-    longHair(HEAD_R * 1.015, HEAD_R * 1.17, 0.42 + (seedNum % 3) * 0.06),
+    longHair(HEAD_R * 1.015, HEAD_R * 1.17, hairLen),
     hairMat
   );
   head.add(hair);
 
-  //  옆 갈래 — 가슴 앞까지 내려와 얼굴을 감싼다 (레퍼런스의 그 머리)
-  for (let sgn = -1; sgn <= 1; sgn += 2) {
-    const lock = new THREE.Mesh(new THREE.CapsuleGeometry(0.082, 0.3, 10, 22), hairMat);
-    lock.position.set(sgn * HEAD_R * 0.86, -0.32, 0.14);   // 귀 앞을 가리지 않게 조금 앞으로
-    lock.rotation.z = sgn * 0.05;
-    lock.scale.set(1, 1, 0.75);
-    head.add(lock);
+  if (hairStyle === 0) {
+    //  옆 갈래 — 가슴 앞까지 내려와 얼굴을 감싼다
+    for (let sgn = -1; sgn <= 1; sgn += 2) {
+      const lock = new THREE.Mesh(new THREE.CapsuleGeometry(0.082, 0.3, 10, 22), hairMat);
+      lock.position.set(sgn * HEAD_R * 0.86, -0.32, 0.14);
+      lock.rotation.z = sgn * 0.05;
+      lock.scale.set(1, 1, 0.75);
+      head.add(lock);
+    }
+  } else if (hairStyle === 2) {
+    const bun = new THREE.Mesh(new THREE.SphereGeometry(0.13, 24, 18), hairMat);
+    bun.scale.set(1, 0.9, 1);
+    bun.position.set(0, HEAD_R * 0.92, -0.06);
+    head.add(bun);
   }
   body.add(head);
 
