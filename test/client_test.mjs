@@ -41,20 +41,29 @@ async function step(name, fn) {
 }
 
 /* ---- 아주 얇은 브라우저 흉내 ---------------------------------------
- *  2D 컨텍스트는 무엇을 호출하든 받아 주는 허수아비로 둔다. 그림이
- *  맞는지는 여기서 볼 수 없고, 볼 필요도 없다. */
+ *  2D 컨텍스트는 무엇을 호출하든 받아 주는 허수아비다. 다만 '어느
+ *  높이에 그렸는지' 만 적어 둔다 — 옷 무늬가 가려지는 자리에 그려지는
+ *  사고가 한 번 있었기 때문이다(아래 '보이는 자리에 그렸나' 참조). */
 const noop = () => {};
+const drawLog = [];                      // 그린 세로 범위 (0~1, 캔버스 기준)
+let logOn = false;
+const C256 = 256;                        // 옷 천의 크기
+const note = (y0, y1) => { if (logOn) drawLog.push([y0 / C256, (y1 === undefined ? y0 : y1) / C256]); };
 const ctx2d = new Proxy({}, {
   get(t, k) {
-    if (k === 'canvas') return { width: 8, height: 8 };
+    if (k === 'canvas') return { width: C256, height: C256 };
     if (k === 'measureText') return () => ({ width: 10 });
     if (k === 'createRadialGradient' || k === 'createLinearGradient') return () => ({ addColorStop: noop });
     if (k === 'getImageData') return () => ({ data: new Uint8ClampedArray(4) });
+    if (k === 'fillRect') return (x, y, w, h) => note(y, y + h);
+    if (k === 'arc') return (x, y, r) => note(y - r, y + r);
+    if (k === 'ellipse') return (x, y, rx, ry) => note(y - ry, y + ry);
+    if (k === 'moveTo' || k === 'lineTo') return (x, y) => note(y);
     return typeof k === 'string' ? noop : undefined;
   },
   set() { return true; }
 });
-const fakeCanvas = () => ({ width: 8, height: 8, getContext: () => ctx2d, style: {}, toDataURL: () => '' });
+const fakeCanvas = () => ({ width: C256, height: C256, getContext: () => ctx2d, style: {}, toDataURL: () => '' });
 globalThis.document = {
   createElement: (t) => (t === 'canvas' ? fakeCanvas() : {
     style: {}, dataset: {}, appendChild: noop, setAttribute: noop,
@@ -233,10 +242,17 @@ console.log('\n── 옷장 (아바타 꾸미기) ──');
     av.root.traverse((o) => { if (o.isMesh && o.material && o.material.color) set.add(o.material.color.getHex()); });
     return set;
   };
-  const a1 = avatar3d.makeAvatar({ seed: 'x', name: 'x', look: [0, 0, 0, 0, 0, 0, 0] });
-  const a2 = avatar3d.makeAvatar({ seed: 'x', name: 'x', look: [0, 0, 0, 3, 0, 0, 0] });
-  ok('상의 번호를 바꾸면 색이 바뀐다',
-    colorsOf(a1).has(W.tops[0]) && !colorsOf(a2).has(W.tops[0]) && colorsOf(a2).has(W.tops[3]));
+  /* 색은 옷이 정한다 — 옛 색 칸(3·4번)을 바꿔도 아무 일 없어야 하고,
+   * 옷(7번)을 바꾸면 그 옷의 색이 입혀져야 한다 */
+  const a1 = avatar3d.makeAvatar({ seed: 'x', name: 'x', look: [0, 0, 0, 0, 0, 0, 0, 0, 2] });
+  const a2 = avatar3d.makeAvatar({ seed: 'x', name: 'x', look: [0, 0, 0, 5, 7, 0, 0, 0, 2] });
+  const a3 = avatar3d.makeAvatar({ seed: 'x', name: 'x', look: [0, 0, 0, 0, 0, 0, 0, 5, 2] });
+  ok('옛 색 칸은 읽히지 않는다',
+    colorsOf(a1).has(W.tops[0]) && colorsOf(a2).has(W.tops[0]));
+  ok('옷을 바꾸면 그 옷의 색이 입혀진다',
+    colorsOf(a3).has(W.tops[5]) && !colorsOf(a3).has(W.tops[0]));
+  ok('청자켓의 색은 청색이다', ((W.tops[3] >> 16 & 255) < (W.tops[3] & 255)),
+    '0x' + W.tops[3].toString(16));
 
   const count = (av) => { let n = 0; av.root.traverse((o) => { if (o.isMesh) n++; }); return n; };
   const long1 = avatar3d.makeAvatar({ seed: 'x', name: 'x', look: [0, 0, 0, 0, 0, 0, 0] });
@@ -247,11 +263,92 @@ console.log('\n── 옷장 (아바타 꾸미기) ──');
     '긴 ' + count(long1) + ' · 단발 ' + count(bob) + ' · 올림 ' + count(bun));
   /* 옷 모양 — 치마·바지·반바지가 기하부터 다른지. 치마만 돌림판이 있다 */
   const skirted = avatar3d.makeAvatar({ seed: 'x', name: 'x', look: [0,0,0,0,0,0,0,0,0] });
-  const pants = avatar3d.makeAvatar({ seed: 'x', name: 'x', look: [0,0,0,0,0,0,0,0,1] });
+  const pants = avatar3d.makeAvatar({ seed: 'x', name: 'x', look: [0,0,0,0,0,0,0,0,2] });
   const hasLathe = (av) => { let n = false; av.root.traverse((o) => { if (o.isMesh && o.geometry.type === 'LatheGeometry') n = true; }); return n; };
-  ok('치마에만 돌림판이 있다', hasLathe(skirted) && !hasLathe(pants));
+  const plaid = avatar3d.makeAvatar({ seed: 'x', name: 'x', look: [0,0,0,0,0,0,0,0,1] });
+  ok('치마(민무늬·체크)에만 돌림판이 있다', hasLathe(skirted) && hasLathe(plaid) && !hasLathe(pants));
+  /* 옷이 '색만 다른 같은 물건' 이 아니라 진짜 다른 물건인지.
+   * 개수를 박아 두면 디테일 하나 늘릴 때마다 엉뚱하게 깨지므로,
+   * 무엇이 어디에 붙었는지를 본다. */
+  const parts = (av) => {
+    const out = [];
+    av.root.updateMatrixWorld(true);
+    av.root.traverse((o) => {
+      if (!o.isMesh || (o.userData && o.userData.isOutline)) return;
+      const e = o.matrixWorld.elements;        // 12·13·14 가 자리다
+      out.push({ kind: o.geometry.type, y: e[13], z: e[14] });
+    });
+    return out;
+  };
+  const tee = avatar3d.makeAvatar({ seed: 'x', name: 'x', look: [0,0,0,0,0,0,0,0,2] });
+  const hoodie = avatar3d.makeAvatar({ seed: 'x', name: 'x', look: [0,0,0,0,0,0,0,2,2] });
+  const jacket = avatar3d.makeAvatar({ seed: 'x', name: 'x', look: [0,0,0,0,0,0,0,3,2] });
+  const teeP = parts(tee), hoodP = parts(hoodie), jackP = parts(jacket);
+  //  후드 — 목 뒤(z 음수)에 얹힌 구
+  const hood = (ps) => ps.some((q) => q.kind.indexOf('Sphere') >= 0 && q.y > 0.95 && q.z < -0.08);
+  ok('후드티엔 목 뒤에 모자가 얹힌다', hood(hoodP) && !hood(teeP));
+  //  자켓 깃 — 끝이 뾰족한 판(ShapeGeometry) 두 장
+  const leaves = (ps) => ps.filter((q) => q.kind.indexOf('Shape') >= 0).length;
+  ok('청자켓엔 깃이 두 장 선다', leaves(jackP) === 2 && leaves(teeP) === 0);
+  //  시보리 — 손목께의 원통
+  const cuffs = (ps) => ps.filter((q) => q.kind.indexOf('Cylinder') >= 0 && q.y > 0.6 && q.y < 0.95).length;
+  ok('맨투맨·후드티 소맷부리엔 시보리가 있다',
+    cuffs(hoodP) === cuffs(teeP) + 2, '티 ' + cuffs(teeP) + ' · 후드 ' + cuffs(hoodP));
+  const hasMap = (av) => { let n = false; av.root.traverse((o) => { if (o.isMesh && o.material && o.material.map && o.geometry.type.indexOf('Capsule') >= 0) n = true; }); return n; };
+  ok('무늬 옷은 천(텍스처)을 입는다', !hasMap(tee) && hasMap(hoodie));
+  [plaid, tee, hoodie, jacket].forEach((a) => a.dispose());
   ok('모양 칸까지 아홉 칸이다', avatar3d.sanitizeLook([]).length === 9);
-  [a1, a2, long1, bob, bun, skirted, pants].forEach((a) => a.dispose());
+  [a1, a2, a3, long1, bob, bun, skirted, pants].forEach((a) => a.dispose());
+}
+
+console.log('\n── 옷 무늬가 보이는 자리에 그려지는가 ──');
+{
+  /* three.js 캡슐의 v 는 '몇 번째 띠냐' 로 매겨진다. 둥근 뚜껑이 띠를
+   * 거의 다 가져가는 탓에, 높이의 3분의 1인 가운데 원통이 v 의 3% 만
+   * 받는다. 그대로 천을 감으면 가슴 그림이 세로로 짓눌려 줄무늬가 되고
+   * 고르게 찍은 단추가 위쪽에서만 뭉친다. evenV() 가 v 를 높이에
+   * 비례하게 다시 매겨 막는다 — 이게 풀리면 옷이 전부 뭉개진다. */
+  const av = avatar3d.makeAvatar({ seed: 'x', name: 'x', look: [0, 0, 0, 0, 0, 0, 0, 3, 2] });
+  let torso = null;
+  av.root.traverse((o) => {
+    if (!torso && o.isMesh && o.material && o.material.map && o.geometry.type.indexOf('Capsule') >= 0) torso = o;
+  });
+  ok('몸통에 천이 감겼다', !!torso);
+  if (torso) {
+    const pos = torso.geometry.attributes.position, uv = torso.geometry.attributes.uv;
+    let lo = Infinity, hi = -Infinity;
+    for (let i = 0; i < pos.count; i++) {
+      const y = pos.getY(i);
+      if (y < lo) lo = y;
+      if (y > hi) hi = y;
+    }
+    let worst = 0;
+    for (let i = 0; i < pos.count; i++) {
+      const want = (pos.getY(i) - lo) / (hi - lo);
+      worst = Math.max(worst, Math.abs(uv.getY(i) - want));
+    }
+    ok('천이 높이에 비례해 감긴다 (안 그러면 가슴 그림이 짓눌린다)',
+      worst < 0.01, '최대 어긋남 ' + (worst * 100).toFixed(2) + '%');
+  }
+  av.dispose();
+
+  /* 몸통 천은 거의 다 가려진다 — 위는 깃과 턱이, 아래는 치마·바지
+   * 허리가 덮어서 캔버스의 가운데 띠만 보인다. 한 번은 이걸 모르고
+   * 요크·시보리·모자끈을 전부 안 보이는 자리에 그려 놓고 '왜 안
+   * 보이나' 를 한참 헤맸다. 그린 자리의 과반이 띠 안에 들어야 한다. */
+  const BAND = [0.2, 0.95];
+  const GARMENTS = [[1, '맨투맨'], [2, '후드티'], [3, '청자켓'], [4, '블라우스']];
+  for (const [st, name] of GARMENTS) {
+    drawLog.length = 0;
+    logOn = true;
+    avatar3d.makeAvatar({ seed: 'x', name: '', look: [0, 0, 0, 0, 0, 0, 0, st, 2] }).dispose();
+    logOn = false;
+    const marks = drawLog.filter((d) => d[1] - d[0] < 0.6);   // 바탕 칠(전면)은 뺀다
+    const inside = marks.filter((d) => d[1] > BAND[0] && d[0] < BAND[1]).length;
+    ok(name + ' 무늬가 보이는 띠 안에 있다',
+      marks.length >= 4 && inside / marks.length >= 0.75,
+      marks.length + '군데 중 ' + inside + '군데');
+  }
 }
 
 console.log('\n── 사람이 그려지는가 ──');

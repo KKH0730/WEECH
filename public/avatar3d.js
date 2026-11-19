@@ -387,6 +387,254 @@ function longHair(rIn, rOut, len) {
   return g;
 }
 
+/* ---- 천 짜기 ---------------------------------------------------------
+ *  옷의 차이는 소매 길이가 아니라 '무엇이 그려져 있나' 다. 단춧줄, 주머니,
+ *  절개선, 시보리 — 전부 캔버스에 그려 몸통(캡슐)에 감는다.
+ *
+ *  ★ 보이는 자리에 그릴 것.
+ *  몸통 천은 거의 다 가려진다. 위는 깃과 턱이, 아래는 치마·바지 허리가
+ *  덮어서 **실제로 보이는 띠는 캔버스의 y 42~74%, x 28~72% 뿐이다**
+ *  (test 의 uvmap 으로 실측). 처음엔 이걸 모르고 0~100% 에 고루 그려서
+ *  요크도 시보리도 모자 끈도 전부 안 보이는 자리에 놓였었다.
+ *  그래서 아래의 그림은 전부 '보이는 띠' 안의 비율(0~1, -1~1)로 적고
+ *  ty()/tx() 가 캔버스 좌표로 옮긴다. 몸을 한 바퀴 두르는 것(요크,
+ *  허리밴드, 시보리)만 가로로 꽉 채운다 — 등 뒤에서도 이어져야 한다.
+ *
+ *  그림은 지어내지 말고 실물 도면을 따랐다.
+ *    청자켓 : Type III 트러커. 앞 요크, 여섯 단추 앞섶, 끝이 뾰족한
+ *             플랩 주머니 둘, 그 옆을 타고 내려오는 V자 절개선, 밑단
+ *             허리밴드. V자 절개선이 Type III 를 Type II 와 가르는
+ *             표식이라, 없으면 그냥 '파란 자켓' 으로 보인다.
+ *    후드티 : 양옆이 트인 캥거루 주머니, 모자 끈, 밑단 시보리.
+ *    맨투맨 : 목 밑 V 삽입(브이거싯), 가슴 로고, 밑단 시보리.
+ *    블라우스: 앞 단춧줄과 단추, 흩뿌린 꽃.
+ *
+ *  가로(u)가 몸통을 한 바퀴 돈다. 캡슐은 u 0 이 정면에서 시작하므로
+ *  기하를 180° 돌려 그림을 앞가슴에, 이음새를 등 뒤로 보낸다.
+ * ------------------------------------------------------------------ */
+/* 캡슐의 v 는 '몇 번째 띠냐' 로 매겨진다. 둥근 뚜껑이 띠를 거의 다
+ * 가져가는 탓에, 높이의 3분의 1을 차지하는 가운데 원통이 v 의 3% 만
+ * 받는다. 그대로 천을 감으면 가슴에 그린 그림이 종잇장처럼 눌려 세로
+ * 줄무늬가 되고, 고르게 찍은 단추가 위쪽에서만 뭉친다.
+ * v 를 '높이에 비례' 로 다시 매겨 이 왜곡을 없앤다. */
+function evenV(geo) {
+  const pos = geo.attributes.position, uv = geo.attributes.uv;
+  let lo = Infinity, hi = -Infinity;
+  for (let i = 0; i < pos.count; i++) {
+    const y = pos.getY(i);
+    if (y < lo) lo = y;
+    if (y > hi) hi = y;
+  }
+  for (let i = 0; i < pos.count; i++) uv.setY(i, (pos.getY(i) - lo) / (hi - lo));
+  uv.needsUpdate = true;
+  return geo;
+}
+
+/* 몸통에서 실제로 눈에 보이는 천의 범위 — test/room3d 가 다시 잰다.
+ * 위는 깃과 턱이, 아래는 치마·바지 허리가 덮는다. */
+const SEEN = { y0: 0.258, y1: 0.890, xr: 0.222 };
+
+function clothTexture(style, colorHex) {
+  const S = 256;
+  const c = document.createElement('canvas');
+  c.width = c.height = S;
+  const g = c.getContext('2d');
+  const hex = '#' + (colorHex >>> 0).toString(16).padStart(6, '0');
+  const shade = (f) => {
+    const r = Math.min(255, (colorHex >> 16 & 255) * f);
+    const gg = Math.min(255, (colorHex >> 8 & 255) * f);
+    const b = Math.min(255, (colorHex & 255) * f);
+    return 'rgb(' + (r | 0) + ',' + (gg | 0) + ',' + (b | 0) + ')';
+  };
+  g.fillStyle = hex;
+  g.fillRect(0, 0, S, S);
+
+  //  보이는 띠 안의 비율 → 캔버스 좌표
+  const ty = (t) => (SEEN.y0 + (SEEN.y1 - SEEN.y0) * t) * S;   // t 0(가슴)~1(허리)
+  const tx = (t) => (0.5 + t * SEEN.xr) * S;                   // t -1(왼)~1(오)
+  const th = (a, b) => ty(b) - ty(a);                          // 띠 높이
+
+  const line = (x1, y1, x2, y2, col, w) => {
+    g.strokeStyle = col; g.lineWidth = w;
+    g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.stroke();
+  };
+  //  몸을 한 바퀴 두르는 띠 — 가로로 꽉 채운다
+  const band = (a, b, f) => { g.fillStyle = shade(f); g.fillRect(0, ty(a), S, th(a, b)); };
+  const rib = (a, b, f) => {                 // 시보리 — 짙은 띠에 세로 골
+    band(a, b, f);
+    g.fillStyle = 'rgba(0,0,0,.09)';
+    for (let x = 0; x < S; x += 5) g.fillRect(x, ty(a), 2, th(a, b));
+  };
+
+  if (style === 1) {
+    /* 맨투맨 — 목 밑 V 삽입 · 가슴 로고 · 밑단 시보리 */
+    g.fillStyle = shade(0.8);
+    g.beginPath();
+    g.moveTo(tx(-0.34), ty(0));
+    g.lineTo(tx(0.34), ty(0));
+    g.lineTo(tx(0), ty(0.2));
+    g.closePath(); g.fill();
+
+    g.fillStyle = 'rgba(255,255,255,.95)';     // 가슴 로고 (별)
+    const R1 = S * 0.082, R2 = S * 0.034, sy = ty(0.48), sx = tx(0);
+    g.beginPath();
+    for (let i = 0; i < 10; i++) {
+      const r = i % 2 ? R2 : R1;
+      const a = -Math.PI / 2 + i * Math.PI / 5;
+      g[i ? 'lineTo' : 'moveTo'](sx + Math.cos(a) * r, sy + Math.sin(a) * r);
+    }
+    g.closePath(); g.fill();
+    rib(0.85, 1, 0.7);
+
+  } else if (style === 2) {
+    /* 후드티 — 모자 끈 · 캥거루 주머니 · 밑단 시보리 */
+    g.fillStyle = 'rgba(252,250,245,.98)';     // 끈 두 가닥
+    g.fillRect(tx(-0.3), ty(0), S * 0.022, th(0, 0.3));
+    g.fillRect(tx(0.25), ty(0), S * 0.022, th(0, 0.3));
+    g.fillStyle = 'rgba(135,125,110,.95)';     // 끝에 꿴 쇠고리
+    g.fillRect(tx(-0.31), ty(0.28), S * 0.03, th(0, 0.06));
+    g.fillRect(tx(0.24), ty(0.28), S * 0.03, th(0, 0.06));
+
+    g.fillStyle = shade(0.7);                  // 주머니 — 양옆이 트여 아래가 넓다
+    g.beginPath();
+    g.moveTo(tx(-0.62), ty(0.42));
+    g.lineTo(tx(0.62), ty(0.42));
+    g.lineTo(tx(0.78), ty(0.86));
+    g.lineTo(tx(-0.78), ty(0.86));
+    g.closePath(); g.fill();
+    line(tx(-0.62), ty(0.42), tx(0.62), ty(0.42), shade(0.54), 2.4);
+    line(tx(-0.62), ty(0.42), tx(-0.78), ty(0.86), shade(0.54), 2.2);
+    line(tx(0.62), ty(0.42), tx(0.78), ty(0.86), shade(0.54), 2.2);
+    g.fillStyle = shade(0.88);                 // 주머니 입구
+    g.fillRect(tx(-0.62), ty(0.42), tx(0.62) - tx(-0.62), th(0, 0.06));
+    rib(0.86, 1, 0.66);
+
+  } else if (style === 3) {
+    /* 청자켓 (Type III 트러커) */
+    const stitch = 'rgba(234,216,172,.92)';    // 노란 박음질 — 데님의 표식
+    const seam = shade(0.68);
+
+    band(0, 0.16, 1.1);                        // 앞 요크 — 몸을 두른다
+    line(0, ty(0.16), S, ty(0.16), seam, 2.4);
+    line(0, ty(0.185), S, ty(0.185), stitch, 1.2);
+
+    //  V자 절개선 — 요크에서 허리밴드로. Type III 의 표식
+    for (let sg = -1; sg <= 1; sg += 2) {
+      line(tx(sg * 0.42), ty(0.16), tx(sg * 0.72), ty(0.86), seam, 2.2);
+      line(tx(sg * 0.47), ty(0.16), tx(sg * 0.77), ty(0.86), stitch, 1);
+    }
+
+    //  가슴 주머니 둘 — 끝이 뾰족한 플랩이 요크 밑에서 나온다
+    for (let sg = -1; sg <= 1; sg += 2) {
+      const px = tx(sg * 0.56), w = S * 0.052;
+      g.fillStyle = shade(0.92);
+      g.fillRect(px - w, ty(0.16), w * 2, th(0.16, 0.55));
+      g.fillStyle = shade(1.05);               // 플랩
+      g.beginPath();
+      g.moveTo(px - w, ty(0.16));
+      g.lineTo(px + w, ty(0.16));
+      g.lineTo(px + w, ty(0.36));
+      g.lineTo(px, ty(0.47));                  // 뾰족한 끝
+      g.lineTo(px - w, ty(0.36));
+      g.closePath(); g.fill();
+      g.strokeStyle = stitch; g.lineWidth = 1.1; g.stroke();
+      g.fillStyle = 'rgba(238,230,214,.96)';   // 플랩 단추
+      g.beginPath(); g.arc(px, ty(0.36), S * 0.012, 0, 6.2832); g.fill();
+    }
+
+    //  앞섶 — 여섯 단추
+    g.fillStyle = shade(0.84);
+    g.fillRect(tx(-0.13), 0, tx(0.13) - tx(-0.13), S);
+    line(tx(-0.13), 0, tx(-0.13), S, stitch, 1);
+    line(tx(0.13), 0, tx(0.13), S, stitch, 1);
+    g.fillStyle = 'rgba(228,218,200,.98)';
+    for (let i = 0; i < 6; i++) {
+      g.beginPath(); g.arc(tx(0), ty(0.06 + i * 0.16), S * 0.016, 0, 6.2832); g.fill();
+    }
+
+    band(0.86, 1, 0.88);                       // 밑단 허리밴드
+    line(0, ty(0.86), S, ty(0.86), seam, 2.2);
+    line(0, ty(0.885), S, ty(0.885), stitch, 1.1);
+
+  } else if (style === 4) {
+    /* 블라우스 — 앞 단춧줄 · 흩뿌린 다섯잎 꽃 */
+    for (let i = 0; i < 16; i++) {
+      const fx = ((i * 61 + 13) % 100) / 100 * S;
+      const fy = ty(((i * 37) % 95) / 100);
+      const fr = S * 0.023;
+      g.fillStyle = 'rgba(255,253,248,.96)';
+      for (let k = 0; k < 5; k++) {
+        const a = k * 1.2566;
+        g.beginPath();
+        g.ellipse(fx + Math.cos(a) * fr, fy + Math.sin(a) * fr, fr * 0.85, fr * 0.6, a, 0, 6.2832);
+        g.fill();
+      }
+      g.fillStyle = '#edc45e';
+      g.beginPath(); g.arc(fx, fy, fr * 0.46, 0, 6.2832); g.fill();
+    }
+    g.fillStyle = shade(1.07);                 // 앞 단춧줄
+    g.fillRect(tx(-0.11), 0, tx(0.11) - tx(-0.11), S);
+    g.fillStyle = 'rgba(255,255,255,.92)';
+    for (let i = 0; i < 5; i++) {
+      g.beginPath(); g.arc(tx(0), ty(0.08 + i * 0.21), S * 0.013, 0, 6.2832); g.fill();
+    }
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+/* 치마에 감는 체크 — 타탄에 나이프 주름을 얹는다.
+ *  주름은 전부 한 방향으로 접혀 겹치므로, 접힌 자리마다 '어두운 골 +
+ *  밝은 마루' 가 한 쌍으로 선다. 이 음영이 없으면 격자무늬를 두른
+ *  원뿔일 뿐 치마로 안 보인다.
+ *  치마는 돌림판이라 천이 고루 보인다 — 몸통과 달리 띠 보정이 필요 없다. */
+function plaidTexture(colorHex) {
+  const S = 256;
+  const c = document.createElement('canvas');
+  c.width = c.height = S;
+  const g = c.getContext('2d');
+  g.fillStyle = '#' + (colorHex >>> 0).toString(16).padStart(6, '0');
+  g.fillRect(0, 0, S, S);
+
+  //  타탄 — 굵은 흰 줄, 가는 검은 줄
+  g.fillStyle = 'rgba(255,255,255,.2)';
+  for (let i = 0; i < 6; i++) { g.fillRect(i * S / 6, 0, S * 0.055, S); g.fillRect(0, i * S / 6, S, S * 0.055); }
+  g.fillStyle = 'rgba(0,0,0,.15)';
+  for (let i = 0; i < 6; i++) { g.fillRect(i * S / 6 + S * 0.085, 0, S * 0.022, S); g.fillRect(0, i * S / 6 + S * 0.085, S, S * 0.022); }
+
+  /* 나이프 주름 — 한 폭마다 '접혀 들어간 골 · 평평한 면 · 돌아 나오는
+   * 마루' 세 단. 그라데이션 대신 단으로 끊는 건 셀 셰이딩과 결이 맞기도
+   * 하거니와, 그라데이션은 눈으로 검사할 길이 없기 때문이다. */
+  const PL = S / 8;
+  for (let i = 0; i < 8; i++) {
+    const x = i * PL;
+    g.fillStyle = 'rgba(0,0,0,.3)';            // 골 — 접혀 가려진 자리
+    g.fillRect(x, 0, PL * 0.16, S);
+    g.fillStyle = 'rgba(0,0,0,.13)';           // 골에서 빠져나오는 비탈
+    g.fillRect(x + PL * 0.16, 0, PL * 0.14, S);
+    g.fillStyle = 'rgba(255,255,255,.15)';     // 마루 — 빛을 받는 모서리
+    g.fillRect(x + PL * 0.86, 0, PL * 0.14, S);
+  }
+  //  허리밴드 — 주름을 눌러 박은 자리
+  g.fillStyle = 'rgba(0,0,0,.12)';
+  g.fillRect(0, 0, S, S * 0.1);
+
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(3, 1);
+  return t;
+}
+
+/* 무늬 있는 천도 사람처럼 제 색을 절반쯤 낸다 */
+function flatCloth(tex) {
+  return new THREE.MeshToonMaterial({
+    map: tex, gradientMap: RAMP_FLAT,
+    emissive: 0xffffff, emissiveMap: tex, emissiveIntensity: 0.5
+  });
+}
+
 /* ---- 몸 치수 -------------------------------------------------------
  *  키 1.65m, 머리가 40%. 몸통은 윗옷 + A라인 치마 — 캡슐 두 개를
  *  포개는 것보다 실루엣이 훨씬 또렷하다.
@@ -407,12 +655,16 @@ const FACE_TOP = Math.PI * 0.34;
 export const WARDROBE = {
   eyes: 5,                                     // faceTexture 의 눈매 가짓수
   hairs: ['긴 생머리', '단발', '올림머리'],
-  topStyles: ['반팔', '긴팔', '민소매'],
-  bottomStyles: ['치마', '바지', '반바지'],
+  topStyles: ['티셔츠', '맨투맨', '후드티', '청자켓', '블라우스', '민소매'],
+  bottomStyles: ['치마', '체크치마', '바지', '청바지', '반바지'],
   hairColors: [0x2b2a33, 0x4a3327, 0x8a5a2b, 0xb98a55, 0x6b4a6e, 0x9a9aa4],
   skins: [0xffd8a9, 0xffe6c8, 0xf0be8a, 0xd99e6a, 0xa9754c],
-  tops: [0xff6b5c, 0x4fc3f7, 0x7ddc7d, 0xffd166, 0xc792ea, 0xff9ec4, 0xf2f2f2, 0x5f78e0],
-  bottoms: [0x3f4a5a, 0xf2f2f2, 0xe8d36a, 0x6fbf8f, 0xf0a0b8, 0x7a6ad9, 0xb98a55, 0x2b2a33],
+  /* 옷마다 제 색이 박혀 있다 — 청자켓은 청색이고 끝이다.
+   * 순서는 topStyles / bottomStyles 와 한 몸이니 같이 움직일 것. */
+  tops: [0xff6b5c, 0x3b4a6b, 0x9aa3ad, 0x7191b8, 0xf2bcc8, 0xf2f2f2],
+  //      티셔츠      맨투맨      후드티      청자켓      블라우스    민소매
+  bottoms: [0xd98a9e, 0x8a7a68, 0xc9b48f, 0x46597e, 0x8a9a6b],
+  //        치마       체크치마    바지(치노)  청바지      반바지(카키)
   shoes: [0x4a4038, 0xf4f1ea, 0xc0392b, 0x3f8ecc, 0x6fbf8f, 0xe0a92c]
 };
 /* look = [눈, 머리모양, 피부, 상의색, 하의색, 신발, 머리색, 상의모양, 하의모양] */
@@ -479,11 +731,21 @@ export function makeAvatar(opts) {
   /* 입을 것 — 직접 고른 look 이 있으면 그걸, 없으면 이름에서 뽑는다 */
   const look = sanitizeLook(opts.look) || lookOf(opts.seed);
   const W = WARDROBE;
-  const main = flat(W.tops[look[3]]);          // 상의
-  const dark = flat(W.bottoms[look[4]]);       // 하의(치마)
+  /* 색은 고르는 게 아니라 옷이 정한다 — look[3]·[4] 는 옛 색 칸인데
+   * 자리만 남겨 두고 읽지 않는다 (배열 모양을 바꾸면 저장된 모습이 어긋난다) */
+  const topStyle = look[7] || 0;
+  const bottomStyle = look[8] || 0;
+  const main = flat(W.tops[topStyle]);         // 상의 — 그 옷의 색
+  const dark = flat(W.bottoms[bottomStyle]);   // 하의 — 그 옷의 색
   const hairHex = W.hairColors[look[6] || 0];
   const hairMat = flat(hairHex);
   const skin = flat(W.skins[look[2]]);
+  /* 청바지 밑단처럼 '같은 색의 밝은 판' 이 필요할 때 */
+  const lightDark = flat((() => {
+    const c = W.bottoms[bottomStyle];
+    const up = (v) => Math.min(255, ((v) | 0) + 52);
+    return (up(c >> 16 & 255) << 16) | (up(c >> 8 & 255) << 8) | up(c & 255);
+  })());
   const shoe = flat(W.shoes[look[5]]);
   const white = flat(0xf7f3ec);
 
@@ -501,12 +763,14 @@ export function makeAvatar(opts) {
   const body = new THREE.Group();
   root.add(body);
 
-  /* 하의 — 모양에 따라 실루엣이 갈린다.
-   *   0 치마   A라인 돌림판. 다리는 맨살
-   *   1 바지   치마 없이 다리 전체가 하의 색
-   *   2 반바지 허벅지만 하의 색, 종아리는 맨살 */
-  const bottomStyle = look[8] || 0;
-  if (bottomStyle === 0) {
+  /* 하의 — 실루엣과 무늬가 갈린다.
+   *   0 치마     A라인 돌림판, 민무늬
+   *   1 체크치마 같은 돌림판에 체크 천
+   *   2 바지     다리 전체가 하의 색
+   *   3 청바지   바지 + 밝게 접어 올린 밑단
+   *   4 반바지   허벅지만 하의 색 */
+  const SKIRTED = bottomStyle <= 1;
+  if (SKIRTED) {
     const skirtPts = [];
     for (let i = 0; i <= 10; i++) {
       const t = i / 10;
@@ -515,11 +779,12 @@ export function makeAvatar(opts) {
         0.74 - 0.36 * t                         // 높이 0.74 → 0.38 (무릎께)
       ));
     }
-    const skirt = new THREE.Mesh(new THREE.LatheGeometry(skirtPts, 40), dark);
+    const skirt = new THREE.Mesh(new THREE.LatheGeometry(skirtPts, 40),
+      bottomStyle === 1 ? flatCloth(plaidTexture(W.bottoms[1])) : dark);
     body.add(skirt);
     body.add(outlineOf(skirt, 0.04));          // 밑단의 어두운 테
   }
-  if (bottomStyle !== 0) {
+  if (!SKIRTED) {
     /* 치마가 없으면 골반이 비어 몸통과 다리가 떨어져 보인다 —
      * 바지 엉덩이로 그 사이를 메운다 */
     const pelvis = new THREE.Mesh(new THREE.CapsuleGeometry(0.155, 0.1, 12, 30), dark);
@@ -527,18 +792,54 @@ export function makeAvatar(opts) {
     pelvis.scale.set(1.02, 1, 0.9);
     body.add(pelvis);
   }
-  //  다리 색 — 바지면 발목까지, 반바지면 허벅지만 하의 색
-  const thighMat = bottomStyle === 0 ? skin : dark;
-  const shinMat = bottomStyle === 1 ? dark : skin;
+  //  다리 색 — 바지·청바지면 발목까지, 반바지면 허벅지만 하의 색
+  const thighMat = SKIRTED ? skin : dark;
+  const shinMat = (bottomStyle === 2 || bottomStyle === 3) ? dark : skin;
 
-  /* 윗옷 — 치마 위에 얹히는 작은 몸통. 목둘레에 흰 깃 */
-  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.16, 0.16, 14, 36), main);
+  /* 윗옷 — 무늬를 그린 천을 몸통에 감는다. 기하를 180° 돌려 두는 건
+   *  그림(u 0.5)이 앞가슴에 오고 이음새가 등 뒤로 가게 하려는 것이다.
+   *  돌림을 mesh 회전으로 하면 납작하게 누른 축까지 돌아가 버린다. */
+  const torsoGeo = evenV(new THREE.CapsuleGeometry(0.16, 0.16, 14, 36));
+  torsoGeo.rotateY(Math.PI);          // 캡슐은 u 0 이 정면(+z)에서 시작한다(실측) — 이음새를 등으로
+  const torsoMat = topStyle === 0 || topStyle === 5
+    ? main : flatCloth(clothTexture(topStyle, W.tops[topStyle]));
+  const torso = new THREE.Mesh(torsoGeo, torsoMat);
   torso.position.y = 0.93;
   torso.scale.set(1.02, 1, 0.88);
   body.add(torso);
   const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.105, 0.125, 0.055, 24), white);
   collar.position.y = 1.075;
   body.add(collar);
+
+  if (topStyle === 2) {
+    //  후드 — 목 뒤에 접어 둔 모자 덩이
+    const hood = new THREE.Mesh(new THREE.SphereGeometry(0.115, 20, 16), main);
+    hood.scale.set(1.25, 0.62, 0.8);
+    hood.position.set(0, 1.06, -0.15);
+    body.add(hood);
+  } else if (topStyle === 3) {
+    /* 자켓 깃 — 트러커는 '목을 두르는 칼라밴드 위에 끝이 뾰족한 깃' 이
+     * 얹힌 구조다. 가슴에 두 장만 붙이면 수트 라펠처럼 보인다. */
+    const band = new THREE.Mesh(new THREE.CylinderGeometry(0.118, 0.128, 0.045, 24), main);
+    band.position.y = 1.098;
+    body.add(band);
+    for (let sgn = -1; sgn <= 1; sgn += 2) {
+      const pt = new THREE.Shape();            // 끝이 뾰족한 깃 한 장
+      pt.moveTo(0, 0); pt.lineTo(sgn * 0.085, 0.012);
+      pt.lineTo(sgn * 0.075, -0.062); pt.lineTo(0, -0.05);
+      const leaf = new THREE.Mesh(new THREE.ShapeGeometry(pt), main);
+      leaf.position.set(0, 1.1, 0.085);
+      leaf.rotation.x = -0.72;
+      body.add(leaf);
+    }
+  } else if (topStyle === 4) {
+    //  블라우스 — 봉긋한 어깨 소매
+    for (let sgn = -1; sgn <= 1; sgn += 2) {
+      const puff = new THREE.Mesh(new THREE.SphereGeometry(0.075, 16, 12), main);
+      puff.position.set(sgn * 0.175, 1.0, 0);
+      body.add(puff);
+    }
+  }
 
   /* 다리 — 치마 밑으로 살짝. 관절은 두되 짧다 */
   const legs = [];
@@ -556,18 +857,27 @@ export function makeAvatar(opts) {
     const foot = new THREE.Mesh(new THREE.SphereGeometry(0.065, 20, 14), shoe);
     foot.scale.set(1, 0.6, 1.5);
     foot.position.set(0, -0.26, 0.025); knee.add(foot);
+    if (bottomStyle === 3) {
+      //  청바지 — 발목에서 밝게 접어 올린 밑단
+      const cuff = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 0.05, 14), lightDark);
+      cuff.position.y = -0.2; knee.add(cuff);
+    }
     hip.add(knee);
     body.add(hip);
     legs.push({ hip, knee });
   }
 
-  /* 팔 — 상의 모양에 따라 소매가 달라진다.
-   *   반팔   소매는 상의 색, 아래팔은 맨살 (기본)
-   *   긴팔   아래팔까지 상의 색
-   *   민소매 어깨부터 맨살 */
-  const topStyle = look[7] || 0;
-  const sleeveMat = topStyle === 2 ? skin : main;
-  const foreMat = topStyle === 1 ? main : skin;
+  /* 팔 — 소매는 옷 종류가 정한다.
+   *   맨투맨·후드티·청자켓 은 긴팔, 티셔츠·블라우스 는 반팔, 민소매는 맨팔 */
+  const LONG_SLEEVE = topStyle === 1 || topStyle === 2 || topStyle === 3;
+  //  시보리는 같은 색을 어둡게 — 천에 그린 밑단 시보리와 같은 농도로
+  const cuffMat = flat((() => {
+    const c = W.tops[topStyle];
+    const dn = (v) => ((v | 0) * 0.74) | 0;
+    return (dn(c >> 16 & 255) << 16) | (dn(c >> 8 & 255) << 8) | dn(c & 255);
+  })());
+  const sleeveMat = topStyle === 5 ? skin : main;
+  const foreMat = LONG_SLEEVE ? main : skin;
   const arms = [];
   for (let sgn = -1; sgn <= 1; sgn += 2) {
     const sh = joint(sgn * 0.175, 1.0, 0);
@@ -579,6 +889,11 @@ export function makeAvatar(opts) {
     el.rotation.x = 0.14;
     const fore = new THREE.Mesh(new THREE.CapsuleGeometry(0.044, 0.05, 8, 20), foreMat);
     fore.position.y = -0.045; el.add(fore);
+    if (topStyle === 1 || topStyle === 2) {
+      //  손목 시보리 — 맨투맨·후드티의 소맷부리는 골진 띠로 조여 있다
+      const cuff = new THREE.Mesh(new THREE.CylinderGeometry(0.048, 0.046, 0.032, 14), cuffMat);
+      cuff.position.y = -0.082; el.add(cuff);
+    }
     const hand = new THREE.Mesh(new THREE.SphereGeometry(0.058, 18, 14), skin);
     hand.position.y = -0.1; el.add(hand);
     sh.add(el);

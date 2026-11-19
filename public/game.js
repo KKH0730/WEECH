@@ -1187,10 +1187,10 @@ const LOOK_ROWS = [
   { slot: 1, label: '헤어스타일', kind: 'thumb', focus: 'head', n: WARDROBE.hairs.length },
   { slot: 6, label: '머리 색', kind: 'color', colors: WARDROBE.hairColors },
   { slot: 2, label: '피부색', kind: 'color', colors: WARDROBE.skins },
+  /* 옷 색은 고르지 않는다 — 색은 그 옷의 디자인에 속한다 (청자켓은 청색이다).
+   * look 의 3·4번 칸은 옛 색 칸으로, 자리만 남고 읽히지 않는다. */
   { slot: 7, label: '상의', kind: 'thumb', focus: 'torso', n: WARDROBE.topStyles.length },
-  { slot: 3, label: '상의 색', kind: 'color', colors: WARDROBE.tops },
   { slot: 8, label: '하의', kind: 'thumb', focus: 'lower', n: WARDROBE.bottomStyles.length },
-  { slot: 4, label: '하의 색', kind: 'color', colors: WARDROBE.bottoms },
   { slot: 5, label: '신발', kind: 'color', colors: WARDROBE.shoes }
 ];
 
