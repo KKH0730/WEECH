@@ -466,16 +466,19 @@ export function makeAvatar(opts) {
   /* 다리 — 치마 밑으로 살짝. 관절은 두되 짧다 */
   const legs = [];
   for (let sgn = -1; sgn <= 1; sgn += 2) {
+    /* 발바닥이 y=0 에 닿아야 한다. 엉덩이(0.5)에서 무릎(-0.20),
+     * 무릎에서 발(-0.26), 발 반높이(0.039)를 빼면 바닥이 0.001 —
+     * 토막을 줄이면 그만큼 발이 공중에 뜬다. */
     const hip = joint(sgn * 0.068, 0.5, 0);
-    const thigh = new THREE.Mesh(new THREE.CapsuleGeometry(0.052, 0.07, 8, 20), skin);
-    thigh.position.y = -0.06; hip.add(thigh);
-    const knee = joint(0, -0.13, 0);
+    const thigh = new THREE.Mesh(new THREE.CapsuleGeometry(0.052, 0.12, 8, 20), skin);
+    thigh.position.y = -0.09; hip.add(thigh);
+    const knee = joint(0, -0.20, 0);
     knee.rotation.x = 0.06;
-    const shin = new THREE.Mesh(new THREE.CapsuleGeometry(0.047, 0.07, 8, 20), skin);
-    shin.position.y = -0.055; knee.add(shin);
+    const shin = new THREE.Mesh(new THREE.CapsuleGeometry(0.046, 0.14, 8, 20), skin);
+    shin.position.y = -0.11; knee.add(shin);
     const foot = new THREE.Mesh(new THREE.SphereGeometry(0.065, 20, 14), shoe);
     foot.scale.set(1, 0.6, 1.5);
-    foot.position.set(0, -0.125, 0.022); knee.add(foot);
+    foot.position.set(0, -0.26, 0.025); knee.add(foot);
     hip.add(knee);
     body.add(hip);
     legs.push({ hip, knee });
