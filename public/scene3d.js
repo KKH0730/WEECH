@@ -34,15 +34,21 @@ function box(w, h, d, material, x, y, z) {
   return m;
 }
 
-/* 발밑/가구 밑에 깔리는 가짜 그림자 */
+/* 발밑/가구 밑에 깔리는 가짜 그림자.
+ * 무늬는 어디나 같으므로 한 장만 만들어 모두가 나눠 쓴다 — 가구마다
+ * 새로 그리면 128×128 캔버스가 백 장 넘게 생긴다. */
+let blobTex = null;
 function blob(radius, opacity) {
-  const { tex } = canvasTex(THREE, 128, 128, (g, w) => {
-    const grd = g.createRadialGradient(w / 2, w / 2, 0, w / 2, w / 2, w / 2);
-    grd.addColorStop(0, 'rgba(0,0,0,.6)');
-    grd.addColorStop(0.55, 'rgba(0,0,0,.26)');
-    grd.addColorStop(1, 'rgba(0,0,0,0)');
-    g.fillStyle = grd; g.fillRect(0, 0, w, w);
-  });
+  if (!blobTex) {
+    blobTex = canvasTex(THREE, 128, 128, (g, w) => {
+      const grd = g.createRadialGradient(w / 2, w / 2, 0, w / 2, w / 2, w / 2);
+      grd.addColorStop(0, 'rgba(0,0,0,.6)');
+      grd.addColorStop(0.55, 'rgba(0,0,0,.26)');
+      grd.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = grd; g.fillRect(0, 0, w, w);
+    }).tex;
+  }
+  const tex = blobTex;
   const m = new THREE.Mesh(
     new THREE.PlaneGeometry(radius * 2, radius * 2),
     new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, opacity: opacity || 0.7 })
@@ -127,8 +133,9 @@ export function buildScene() {
   });
   const carpetMat = new THREE.MeshStandardMaterial({ map: carpetTex.tex, roughness: 1 });
   (R.CARPETS || [R.CARPET]).forEach((c) => {
+    if (!c) return;
     const rug = new THREE.Mesh(new THREE.BoxGeometry(c.w, 0.02, c.d), carpetMat);
-    rug.position.set(c.x, 0.011, c.z);
+    rug.position.set(c.x, (c.y || 0) + 0.011, c.z);   // 단상·계단 위에도 깐다
     scene.add(rug);
   });
 
@@ -345,6 +352,13 @@ export function buildScene() {
   const riser = mat(0x2a2430, 0.95);
   const wood2 = mat(0x75563f, 0.8);
 
+  /* 모드에 따라 오르내리는 가구를 여기 모은다.
+   *   영화관 : 의자는 바닥 아래로 내려가고, 단은 높이가 0 으로 줄어든다
+   *   노래방 : 소파와 테이블이 바닥에서 올라온다
+   * 충돌은 roomdef 가 모드 바뀌는 즉시 갈아 끼우고, 여기서는 보이는 것만 맡는다. */
+  const modeFurn = [];
+  const doors = [];           // 의자가 내려갈 때 바닥에 열리는 어두운 구멍
+
   R.furniture.forEach((f) => {
     const g = new THREE.Group();
     g.position.set(f.x, f.y || 0, f.z);
@@ -359,10 +373,60 @@ export function buildScene() {
       g.add(box(0.11, 0.3, d - 0.12, dark, -w / 2 + 0.055, 0.56, 0));       // 팔걸이
       g.add(box(0.11, 0.3, d - 0.12, dark, w / 2 - 0.055, 0.56, 0));
       g.add(box(w - 0.3, 0.33, 0.22, dark, 0, 0.165, 0));                   // 받침대
-    } else if (f.type === 'step') {
-      // 뒷줄을 한 단 올리는 계단. 윗면만 보이면 되므로 상자 하나
+    } else if (f.type === 'step' || f.type === 'stair') {
+      // 뒷줄을 한 단 올리는 단, 그리고 통로를 오르내리는 작은 계단.
+      // 윗면만 보이면 되므로 상자 하나에 코끝 유도등을 붙인다.
       g.add(box(f.w, Math.max(0.02, f.top), f.d, riser, 0, f.top / 2, 0));
-      g.add(box(f.w, 0.02, 0.05, mat(0xd98d4e, 0.4), 0, f.top + 0.01, -f.d / 2 + 0.03));  // 코끝 유도등
+      g.add(box(f.w, 0.02, 0.05, mat(0xd98d4e, 0.4), 0, f.top + 0.01, -f.d / 2 + 0.03));
+    } else if (f.type === 'stage') {
+      /* 스크린 아래 단상. 옆면은 어둡게 두고 모서리에만 놋쇠 띠를 둘러
+       * 붉은 카펫과 경계가 서게 한다. 윗면은 카펫이 덮으므로 비워 둔다. */
+      g.add(box(f.w, f.top, f.d, riser, 0, f.top / 2, 0));
+      const brass = mat(0xb08a4e, 0.45, 0.6);
+      g.add(box(f.w + 0.06, 0.05, f.d + 0.06, brass, 0, f.top - 0.025, 0));   // 테두리
+      g.add(box(f.w + 0.04, 0.03, 0.04, mat(0xd98d4e, 0.4), 0, 0.09, f.d / 2));  // 발치 유도등
+    } else if (f.type === 'sofa') {
+      /* 노래방 소파 — 길게 뻗은 한 토막. 로컬 x 가 길이, +z 쪽이 등받이.
+       * 앉는 면 0.44, 등받이 꼭대기 0.95 (roomdef 의 KARA 와 맞춰 둔다) */
+      const w = f.w, d = f.d;
+      g.add(box(w, 0.28, d, dark, 0, 0.14, 0));                            // 받침
+      g.add(box(w - 0.12, 0.17, d - 0.2, fabric2, 0, 0.355, -0.03));       // 방석
+      g.add(box(w, 0.52, 0.22, fabric, 0, 0.69, d / 2 - 0.11));            // 등받이
+      g.add(box(0.16, 0.3, d - 0.06, dark, -w / 2 + 0.08, 0.59, 0));       // 팔걸이
+      g.add(box(0.16, 0.3, d - 0.06, dark, w / 2 - 0.08, 0.59, 0));
+      // 방석 사이 이음새 — 한 덩이로 보이지 않게
+      const n = Math.max(2, Math.round(w / 1.2));
+      for (let i = 1; i < n; i++) {
+        g.add(box(0.04, 0.19, d - 0.2, dark, -w / 2 + i * (w / n), 0.36, -0.03));
+      }
+      // 등받이에 기대 둔 쿠션 몇 개
+      for (let i = 0; i < n; i++) {
+        if (i % 2) continue;
+        const c = box(0.34, 0.34, 0.14, fabric2, -w / 2 + (i + 0.5) * (w / n), 0.6, d / 2 - 0.27);
+        c.rotation.x = 0.22; g.add(c);
+      }
+    } else if (f.type === 'rtable') {
+      /* 노래방 원형 테이블 — 소파 한가운데. 위에 마이크 두 대를 얹어 둔다. */
+      const rad = f.w / 2, h = f.top;
+      const topM = new THREE.Mesh(new THREE.CylinderGeometry(rad, rad, 0.08, 40), wood2);
+      topM.position.y = h - 0.04; g.add(topM);
+      const rim = new THREE.Mesh(new THREE.TorusGeometry(rad, 0.035, 8, 44), mat(0x2c2531, 0.6, 0.3));
+      rim.rotation.x = Math.PI / 2; rim.position.y = h - 0.04; g.add(rim);
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.26, h - 0.1, 16), wood);
+      post.position.y = (h - 0.1) / 2; g.add(post);
+      const foot = new THREE.Mesh(new THREE.CylinderGeometry(0.78, 0.86, 0.07, 24), mat(0x2c2531, 0.7, 0.3));
+      foot.position.y = 0.035; g.add(foot);
+      // 마이크 두 대
+      for (let i = 0; i < 2; i++) {
+        const mic = new THREE.Group();
+        const body = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.034, 0.26, 10), mat(0x1d1a22, 0.5, 0.4));
+        body.rotation.z = Math.PI / 2; mic.add(body);
+        const head = new THREE.Mesh(new THREE.SphereGeometry(0.045, 12, 10), mat(0x8e8e96, 0.4, 0.7));
+        head.position.x = 0.15; mic.add(head);
+        mic.position.set(i ? 0.55 : -0.55, h + 0.05, i ? -0.3 : 0.3);
+        mic.rotation.y = i ? 0.6 : -0.6;
+        g.add(mic);
+      }
     } else if (f.type === 'table') {
       g.add(box(f.w, 0.07, f.d, wood2, 0, 0.42, 0));
       [[-f.w / 2 + 0.14, -f.d / 2 + 0.14], [f.w / 2 - 0.14, -f.d / 2 + 0.14],
@@ -403,12 +467,36 @@ export function buildScene() {
     }
 
     g.traverse((o) => { if (o.isMesh) collidables.push(o); });
-    if (f.type !== 'step') {
-      const sh = blob(Math.max(f.w, f.d) * 0.75, 0.55);
-      sh.position.set(f.x, (f.y || 0) + 0.013, f.z);
-      scene.add(sh);
+
+    /* 그림자는 묶음 안에 넣는다 — 가구가 바닥으로 내려갈 때 같이 따라가야 한다.
+     * 광선 검사(collidables)에 들어가면 안 되므로 traverse 뒤에 붙인다. */
+    if (f.type !== 'step' && f.type !== 'stair') {
+      const rad = Math.max(f.w, f.d) * 0.6;
+      const sh = blob(rad, 0.55);
+      sh.scale.set(f.w * 0.8 / (rad * 2), f.d * 1.1 / (rad * 2), 1);
+      sh.position.set(0, 0.013, 0);
+      g.add(sh);
     }
     scene.add(g);
+
+    if (f.mode) {
+      const y0 = f.y || 0;
+      modeFurn.push({
+        g: g, mode: f.mode, y0: y0,
+        tier: (f.type === 'step' || f.type === 'stair'),
+        // 영화관 것은 제 단 높이만큼 더 내려가야 바닥 밑으로 완전히 숨는다
+        sink: (f.mode === 'cinema') ? y0 + 1.7 : 1.5
+      });
+      // 의자가 내려가는 자리 — 바닥이 열린 것처럼 어둡게 뚫린다
+      if (f.type === 'chair') {
+        const d = blob(Math.max(f.w, f.d) * 0.62, 0);
+        d.material.color.setScalar(0);
+        d.position.set(f.x, y0 + 0.016, f.z);
+        d.visible = false;
+        scene.add(d);
+        doors.push({ m: d, y0: y0 });
+      }
+    }
   });
 
   /* ---------------- 천장 코브 조명 ---------------- */
@@ -691,11 +779,16 @@ export function buildScene() {
   let mode = 'cinema';
   let mirrorT = 0;             // 0 = 천장에 숨음, 1 = 다 내려옴
   let dimT = 1;                // 1 = 환하게, LIGHT.dim = 어둑하게
-  api.setMode = function (m) { mode = (m === 'karaoke') ? 'karaoke' : 'cinema'; };
+  api.setMode = function (m) {
+    mode = (m === 'karaoke') ? 'karaoke' : 'cinema';
+    R.setMode(mode);        // 충돌·바닥높이·앉을 자리는 즉시 갈아 끼운다
+  };
   api.getMode = function () { return mode; };
   // 예전 이름 — 쓰는 곳이 남아 있어도 깨지지 않게
   api.setKaraoke = function (on) { api.setMode(on ? 'karaoke' : 'cinema'); };
 
+  /* 0 = 영화관 가구, 1 = 노래방 가구. 둘 사이를 천천히 건너간다. */
+  let furnT = 0;
   let cineT = 1;               // 0 = 천장에 걷힘, 1 = 다 내려옴 (영화관이 기본이라 1)
   let spinT = 0;               // 돌아간 각도를 쌓아 둔다 (멈추면 그대로 선다)
   let runT = 0;                // 0 = 멎음, 1 = 돌아감
@@ -709,6 +802,42 @@ export function buildScene() {
       ? R.LIGHT.tv + Math.sin(t * 2.3) * 1.2 + Math.sin(t * 7.1) * 0.5
       : 0.5;
     api.tvLight.intensity += (target - api.tvLight.intensity) * 0.08;
+
+    /* ---- 바닥 가구가 자리를 주고받는다 ----
+     *  영화관 → 노래방 : 단은 높이가 0 으로 주저앉고, 의자는 열린 바닥으로
+     *                    내려간다. 그 사이 소파와 테이블이 바닥에서 솟는다.
+     *  다 건너가면 반대쪽은 아예 그리지 않는다. */
+    {
+      const want = (mode === 'karaoke') ? 1 : 0;
+      furnT += (want - furnT) * 0.045;
+      if (Math.abs(want - furnT) < 0.002) furnT = want;
+      const e = furnT * furnT * (3 - 2 * furnT);      // 부드럽게
+
+      for (let i = 0; i < modeFurn.length; i++) {
+        const it = modeFurn[i];
+        if (it.mode === 'cinema') {
+          if (it.tier) {
+            it.g.scale.y = Math.max(0.0012, 1 - e);   // 단은 납작해진다
+          } else {
+            it.g.position.y = it.y0 - e * it.sink;    // 의자는 가라앉는다
+          }
+          it.g.visible = e < 0.995;
+        } else {
+          it.g.position.y = it.y0 - (1 - e) * it.sink;
+          it.g.visible = e > 0.005;
+        }
+      }
+
+      // 바닥이 열린 구멍 — 건너가는 동안에만, 한가운데서 가장 짙다
+      const open = Math.sin(Math.PI * e);
+      for (let i = 0; i < doors.length; i++) {
+        const d = doors[i];
+        if (open < 0.01) { d.m.visible = false; continue; }
+        d.m.visible = true;
+        d.m.material.opacity = open * 0.85;
+        d.m.position.y = d.y0 * (1 - e) + 0.016;      // 주저앉는 단을 따라간다
+      }
+    }
 
     /* ---- 영사기 등장·퇴장 ----
      *  영화관 모드면 천장에서 내려오고, 노래방 모드면 천장으로 걷힌다.

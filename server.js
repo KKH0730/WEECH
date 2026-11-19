@@ -913,6 +913,14 @@ function handleMessage(entry, m, now) {
       const v = (m.v === 'karaoke') ? 'karaoke' : 'cinema';
       if (room.mode === v) return;
       room.mode = v;
+      /* 바닥에 놓인 것이 통째로 바뀐다 — 영화관 의자는 내려가고 소파가 올라온다.
+       * 앉아 있던 자리가 사라지므로 전원 일으켜 세운다. 그냥 두면 없는 의자에
+       * 앉은 채로 허공에 떠 있게 된다. */
+      for (const u of room.users.values()) {
+        if (u.seat < 0) continue;
+        u.seat = -1;
+        broadcast(room, { t: 'seat', id: u.id, seat: -1 });
+      }
       if (v !== 'karaoke') {
         // 영화관으로 돌아가면 목소리와 게임모드는 접는다 — 켜 둔 채로 새지 않게
         for (const u of room.users.values()) u.mic = false;

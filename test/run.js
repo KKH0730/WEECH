@@ -18,6 +18,7 @@ const PORT = Number(process.env.PORT) || 3000;
 
 const SUITES = [
   { file: 'pitch_test.mjs', name: '음정 감지', needsServer: false },
+  { file: 'room3d_test.js', name: '3D 공간 · 좌석 · 통행', needsServer: false },
   { file: 'name_test.js', name: '이름 자동부여·바꾸기', needsServer: true },
   { file: 'room_test.js', name: 'Play 모드·마이크·권한', needsServer: true },
   { file: 'empty_test.js', name: '링크 없이 만든 빈 방', needsServer: true },

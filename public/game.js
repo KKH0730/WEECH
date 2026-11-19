@@ -314,7 +314,9 @@ function standUp() {
   me.st = 0;
   sitArmed = false;                               // 구역을 벗어나기 전엔 다시 앉지 않는다
   if (st) {                                        // 의자 앞으로 한 걸음 물러난다
-    const p = R.collide(st.zx, st.zz - 0.3, 0.26, st.y);
+    // 소파는 돌아가 있다 — 그 자리가 바라보는 쪽으로 물러나야 한다
+    const fx = -Math.sin(st.rot || 0), fz = -Math.cos(st.rot || 0);
+    const p = R.collide(st.zx + fx * 0.3, st.zz + fz * 0.3, 0.26, st.y);
     me.x = p.x; me.z = p.z;
   }
   send({ t: 'stand' });
@@ -630,6 +632,16 @@ function setMode(v, byName) {
   karaoke = on;
   if (room) room.mode = v;
   world.setMode(v);                           // 영사기와 미러볼이 자리를 주고받는다
+  /* 바닥에 놓인 것이 통째로 바뀌었다 (단·의자 ↔ 소파·테이블).
+   * 사라진 자리에 앉아 있었다면 일어서고, 없어진 단 위에 서 있었다면
+   * 새 바닥으로 발을 내린다. 안 하면 허공에 뜬 채로 남는다. */
+  if (mySeat >= 0 && !R.seatUsable(mySeat)) { mySeat = -1; me.st = 0; sitArmed = false; }
+  {
+    const p = R.collide(me.x, me.z, 0.26, me.y);
+    me.x = p.x; me.z = p.z;
+    const g = R.groundAt(me.x, me.z);
+    if (me.y < g) { me.y = g; me.vy = 0; me.grounded = true; }
+  }
   document.body.classList.toggle('karaoke', on);
   $('miCinema').classList.toggle('on', !on);
   $('miKaraoke').classList.toggle('on', on);
