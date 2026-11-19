@@ -1167,6 +1167,7 @@ server.listen(PORT, () => {
   console.log('  방 정원 ' + ROOM_CAP + '명 · 최대 ' + MAX_ROOMS + '개 방');
   console.log(Melody.ready()
     ? '  음정 게임모드 :  준비됨 (MR 에서 주선율을 뽑아 캐시합니다)'
-    : '  음정 게임모드 :  꺼짐 — ' + Melody.reason() + ' (나머지는 그대로 돕니다)');
+    : '  음정 게임모드 :  꺼짐 — ' + Melody.reason() + ' (나머지는 그대로 돕니다)\n' +
+      '                   쓰려면 :  pip install yt-dlp  ·  ffmpeg 설치 (README 의 「설치」 참고)');
   console.log('');
 });
