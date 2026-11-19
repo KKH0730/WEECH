@@ -5,7 +5,7 @@
  *  이름표와 말풍선은 늘 카메라를 보는 스프라이트.
  * ------------------------------------------------------------------ */
 import * as THREE from 'three';
-import { mat, outlineOf, RAMP_SOFT } from './toon.js';
+import { mat, outlineOf, ramp, RAMP_SOFT } from './toon.js';
 
 /* 윗옷 · 아랫도리 · 머리카락. 색은 이름에서 뽑으므로 늘 같은 사람이 같은 옷이다.
  * 0번(윗옷)은 참여자 목록의 점 색과 화살 색으로도 쓰인다 — 자리를 바꾸지 말 것. */
@@ -85,17 +85,19 @@ function faceTexture(seed, shut, hairHex) {
    * 안에 색 있는 홍채와 흰 점이 있다. 검은 타원만 찍으면 단추가 된다. */
   const IRIS = [0x4a86d8, 0x5aa36b, 0x8a6a3f, 0x6b5ad0, 0x3f8f92];
   const iris = IRIS[kind];
-  const EY = S * 0.455, EX = S * 0.205;       // 눈 높이 · 가운데서 벌어진 거리
-  const rx = S * 0.098, ry = S * 0.125;
+  const EY = S * 0.5, EX = S * 0.245;         // 눈 높이 · 가운데서 벌어진 거리
+  /* 세로로 길쭉한 타원이다. 동그라미로 두면 단추처럼 보인다 —
+   * 높이가 너비의 1.5배쯤 되어야 그 동네 눈매가 된다. */
+  const rx = S * 0.118, ry = S * 0.182;
 
   // 볼터치 — 눈 바깥 아래. 가장자리가 흐려야 분칠처럼 보인다
   for (const sx of [-1, 1]) {
-    const x = S / 2 + sx * S * 0.305, y = S * 0.565;
-    const grd = g.createRadialGradient(x, y, 0, x, y, S * 0.082);
-    grd.addColorStop(0, 'rgba(255,146,146,.55)');
+    const x = S / 2 + sx * S * 0.355, y = S * 0.625;
+    const grd = g.createRadialGradient(x, y, 0, x, y, S * 0.105);
+    grd.addColorStop(0, 'rgba(243,139,160,.6)');
     grd.addColorStop(1, 'rgba(255,146,146,0)');
     g.fillStyle = grd;
-    g.beginPath(); g.arc(x, y, S * 0.082, 0, 6.2832); g.fill();
+    g.beginPath(); g.arc(x, y, S * 0.105, 0, 6.2832); g.fill();
   }
 
   g.lineCap = 'round';
@@ -106,7 +108,7 @@ function faceTexture(seed, shut, hairHex) {
 
     if (shut) {
       // 감은 눈 — 아래로 휜 굵은 선
-      g.strokeStyle = '#2a2018';
+      g.strokeStyle = '#2e3550';
       g.lineWidth = S * 0.034;
       g.beginPath();
       g.moveTo(x - rx * 0.92, EY - ry * 0.1);
@@ -116,21 +118,21 @@ function faceTexture(seed, shut, hairHex) {
     }
 
     // 흰자 — 아주 조금만 보인다
-    g.fillStyle = '#fbf7f2';
+    g.fillStyle = '#2e3550';
     g.beginPath(); g.ellipse(x, EY, rx, ry, 0, 0, 6.2832); g.fill();
     // 홍채 — 흰자를 거의 채운다
-    g.fillStyle = hex(iris);
-    g.beginPath(); g.ellipse(x, EY + ry * 0.04, rx * 0.82, ry * 0.88, 0, 0, 6.2832); g.fill();
+    g.fillStyle = '#2e3550';
+    g.beginPath(); g.ellipse(x, EY + ry * 0.05, rx * 0.86, ry * 0.86, 0, 0, 6.2832); g.fill();
     // 동공
-    g.fillStyle = '#241c16';
-    g.beginPath(); g.ellipse(x, EY + ry * 0.08, rx * 0.46, ry * 0.56, 0, 0, 6.2832); g.fill();
+    g.fillStyle = '#2e3550';
+    g.beginPath(); g.ellipse(x, EY + ry * 0.1, rx * 0.52, ry * 0.58, 0, 0, 6.2832); g.fill();
     // 흰 점 — 이것 하나로 눈이 살아난다
     g.fillStyle = 'rgba(255,255,255,.95)';
     g.beginPath();
     g.ellipse(x + rx * 0.3, EY - ry * 0.42, rx * 0.26, ry * 0.22, -0.4, 0, 6.2832);
     g.fill();
     // 윗눈꺼풀 — 위쪽을 덮어 눈매를 만든다
-    g.strokeStyle = '#2a2018';
+    g.strokeStyle = '#2e3550';
     g.lineWidth = S * 0.03;
     g.beginPath();
     g.moveTo(x - rx * 1.02, EY - ry * 0.52);
@@ -139,7 +141,7 @@ function faceTexture(seed, shut, hairHex) {
   }
 
   // 눈썹 — 머리카락과 같은 색, 가늘게
-  g.strokeStyle = hex(hairHex || 0x4a3327);
+  g.strokeStyle = '#2e3550';                   // 눈썹도 눈과 같은 남색
   g.lineWidth = S * 0.02;
   for (const sx of [-1, 1]) {
     const x = S / 2 + sx * EX;
@@ -149,24 +151,20 @@ function faceTexture(seed, shut, hairHex) {
     g.stroke();
   }
 
-  /* 코 — 있는지 없는지 모를 만큼 작다. 크게 그리면 금세 사람 얼굴이 되어
-   * 그 동네 사람다움이 사라진다. */
-  g.fillStyle = 'rgba(214,142,120,.75)';
-  g.beginPath();
-  g.ellipse(S / 2, S * 0.545, S * 0.016, S * 0.013, 0, 0, 6.2832);
-  g.fill();
+  /* 코는 그리지 않는다 — 작은 혹을 따로 붙였다(makeAvatar).
+   * 그림과 혹이 겹치면 얼룩처럼 보인다. */
 
   // 입 — 눈 가까이, 작고 부드러운 웃음
-  const mx = S / 2, my = S * 0.63;
-  g.strokeStyle = '#3a2a22';
-  g.lineWidth = S * 0.022;
+  const mx = S / 2, my = S * 0.71;
+  g.strokeStyle = '#2e3550';
+  g.lineWidth = S * 0.03;
   if (kind === 4) {                            // 벌린 입
     g.fillStyle = '#7a4a46';
     g.beginPath(); g.ellipse(mx, my + S * 0.006, S * 0.03, S * 0.026, 0, 0, 6.2832); g.fill();
   } else {
     g.beginPath();
-    g.moveTo(mx - S * 0.042, my - S * 0.008);
-    g.quadraticCurveTo(mx, my + S * 0.034, mx + S * 0.042, my - S * 0.008);
+    g.moveTo(mx - S * 0.07, my - S * 0.014);
+    g.quadraticCurveTo(mx, my + S * 0.058, mx + S * 0.07, my - S * 0.014);
     g.stroke();
   }
 
@@ -176,27 +174,259 @@ function faceTexture(seed, shut, hairHex) {
   return t;
 }
 
-/* 머리가 커야 그 동네 사람처럼 보인다. 키 1.7m 에 머리 지름 0.6m —
- * 2.8등신쯤이다. 목은 없고, 손발은 둥근 덩어리로만 둔다. */
-const HEAD_R = 0.30;
-/* 얼굴판 — 좁게 잡아야 이목구비가 옆으로 끌려가지 않는다.
- * 넓게 감으면 눈이 관자놀이까지 퍼져 사람이 아니라 가면처럼 보인다. */
-const FACE_PHI = Math.PI * 0.46;      // 좌우 83°
-const FACE_THETA = Math.PI * 0.40;    // 위아래 72°
-const FACE_TOP = Math.PI * 0.36;      // 정수리에서 65° 아래부터
+/* ---- 머리 모양 ------------------------------------------------------
+ *  정구면이면 공을 얹은 것처럼 보인다. 사람 머리는 광대뼈께가 가장 넓고
+ *  턱으로 갈수록 좁아진다. 각도(theta)마다 반지름을 달리해 짠다.
+ *      theta 0     정수리
+ *      theta 90°   광대 — 가장 넓다
+ *      theta 180°  턱 — 좁다
+ * ------------------------------------------------------------------ */
+function headShape(r, patch) {
+  /* patch 를 주면 그 범위만 떼어낸다. 얼굴 그림을 붙일 면은 두상과
+   * 똑같은 곡면이어야 한다 — 따로 만든 구를 겹치면 광대께에서 묻힌다. */
+  const q = patch || { p0: 0, pLen: Math.PI * 2, t0: 0, tLen: Math.PI, mul: 1 };
+  const NP = patch ? 40 : 48, NT = patch ? 28 : 36;
+  const pos = [], nor = [], uv = [], idx = [];
+  const prof = (th) => {
+    const t = th / Math.PI;
+    const wide = 1 + 0.05 * Math.sin(th);                 // 광대께를 살짝 부풀린다
+    const chin = 1 - 0.22 * Math.max(0, (t - 0.60) / 0.40) ** 1.6;   // 턱으로 좁아진다
+    return wide * chin;
+  };
+  for (let it = 0; it <= NT; it++) {
+    const th = q.t0 + (it / NT) * q.tLen;
+    const rr = r * prof(th) * (q.mul || 1);
+    for (let ip = 0; ip <= NP; ip++) {
+      const phi = q.p0 + (ip / NP) * q.pLen;
+      const sx = Math.sin(th) * Math.sin(phi);
+      const sy = Math.cos(th);
+      const sz = Math.sin(th) * Math.cos(phi);
+      /* 가로로 넓고 위아래로 낮은 둥근 꼴. 세로로 긴 머리는 어른처럼
+       * 보이고, 정구면은 공처럼 보인다. 앞뒤는 눌러 얼굴을 평평하게. */
+      pos.push(sx * rr * 1.1, sy * rr * 0.9, sz * rr * 0.97);
+      nor.push(sx, sy, sz);
+      uv.push(ip / NP, 1 - it / NT);
+    }
+  }
+  for (let it = 0; it < NT; it++) for (let ip = 0; ip < NP; ip++) {
+    const i0 = it * (NP + 1) + ip;
+    idx.push(i0, i0 + NP + 1, i0 + 1, i0 + 1, i0 + NP + 1, i0 + NP + 2);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(idx);
+  return g;
+}
+
+/* ---- 머리카락 덩어리 ------------------------------------------------
+ *  얇은 껍질 하나로 덮으면 머리통에 색칠한 것처럼 보인다 — 두께가 0이라
+ *  옆에서 보면 종이다. 진짜 머리카락은 두피에서 떠 있는 '덩어리' 라서
+ *  밑단에 단면이 보인다.
+ *
+ *  그래서 겉면과 속면을 따로 짜고 밑단에서 둘을 이어 붙인다.
+ *      겉면  두피보다 OUT 배 (머리보다 확실히 크다 — 부피가 보여야 한다)
+ *      속면  두피 바로 위
+ *      밑단  둘을 잇는 띠 — 여기가 보여야 '깎은 단면' 이 생긴다
+ *
+ *  내려오는 깊이는 각도마다 다르다. 앞은 눈썹까지, 귀 옆은 올라가고,
+ *  뒤는 목덜미까지.
+ * ------------------------------------------------------------------ */
+function hairMass(rIn, rOut, base, front, back) {
+  const NP = 64, NT = 20;
+  const pos = [], nor = [], idx = [];
+  const tMaxAt = (phi) => {
+    const f = Math.cos(phi);
+    return base + front * Math.max(0, f) * Math.abs(f) + back * Math.max(0, -f) * Math.abs(f);
+  };
+  // 겉면은 정수리 쪽이 더 도톰하다 — 머리카락이 쌓인 만큼
+  const puff = (t) => 1 + 0.07 * (1 - t) * (1 - t);
+
+  const ring = (r, flip, puffed) => {
+    const base0 = pos.length / 3;
+    for (let it = 0; it <= NT; it++) {
+      for (let ip = 0; ip <= NP; ip++) {
+        const phi = (ip / NP) * Math.PI * 2;
+        const th = (it / NT) * tMaxAt(phi);
+        const k = puffed ? puff(it / NT) : 1;
+        const sx = Math.sin(th) * Math.sin(phi);
+        const sy = Math.cos(th);
+        const sz = Math.sin(th) * Math.cos(phi);
+        pos.push(sx * r * k, sy * r * k * 1.03, sz * r * k * 0.95);
+        nor.push(flip ? -sx : sx, flip ? -sy : sy, flip ? -sz : sz);
+      }
+    }
+    for (let it = 0; it < NT; it++) for (let ip = 0; ip < NP; ip++) {
+      const i0 = base0 + it * (NP + 1) + ip;
+      const i1 = i0 + 1, i2 = i0 + NP + 1, i3 = i2 + 1;
+      if (flip) idx.push(i0, i1, i2, i1, i3, i2);
+      else idx.push(i0, i2, i1, i1, i2, i3);
+    }
+    return base0;
+  };
+  const outBase = ring(rOut, false, true);     // 겉면
+  const inBase = ring(rIn, true, false);       // 속면 (뒤집어서)
+
+  // 밑단 — 겉과 속을 잇는 띠. 이게 '깎은 단면' 으로 보인다
+  const lastRow = NT * (NP + 1);
+  for (let ip = 0; ip < NP; ip++) {
+    const o0 = outBase + lastRow + ip, o1 = o0 + 1;
+    const i0 = inBase + lastRow + ip, i1 = i0 + 1;
+    idx.push(o0, i0, o1, o1, i0, i1);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();                    // 밑단 모서리가 또렷해진다
+  return g;
+}
+
+/* ---- 긴 생머리 ------------------------------------------------------
+ *  짧은 덮개만 씌우면 반삭으로 보인다. 긴 머리는 두피를 덮고 내려오다가
+ *  어깨 아래까지 '늘어진다' — 그 늘어진 부분이 실루엣의 절반이다.
+ *
+ *  한 가닥의 길은 두 토막이다.
+ *     u 0 ~ 0.42   두피를 따라 내려온다 (여기까지가 덮개)
+ *     u 0.42 ~ 1   머리 끝에서 아래로 떨어진다 (늘어진 부분)
+ *
+ *  얼굴 쪽(앞)은 늘어뜨리지 않는다 — 앞머리는 눈썹에서 끊는다.
+ *  옆과 뒤로 갈수록 길어져 얼굴을 감싸는 모양이 된다.
+ *  겉면·속면·밑단을 모두 짜서 두께를 준다.
+ * ------------------------------------------------------------------ */
+function longHair(rIn, rOut, len) {
+  /* 면 수를 아주 많이 둘 이유가 없다 — 매 프레임 꼭짓점을 흔들어야 하므로
+   * 사람 수(최대 스무 명)를 곱한 만큼 계산이 된다. */
+  const NP = 56, NU = 20;
+  const pos = [], nor = [], idx = [], sway = [];
+  const SPLIT = 0.42;
+  // 앞(phi=0)은 짧고, 옆·뒤는 길다
+  const capAt = (phi) => {
+    const f = Math.cos(phi);
+    /* 옆(귀 위)도 72° 까지 내려와야 한다. 60° 에서 끊으면 옆으로
+     * 떨어지는 장이 머리 반폭보다 안쪽에 떠서(0.363 < 0.374) 머리통에
+     * 묻힌다 — 귀 뒤 두피가 그대로 드러난다. 앞머리는 그대로 눈썹에서. */
+    return Math.PI * 0.40 + Math.PI * 0.02 * Math.max(0, f) * Math.abs(f)
+                          + Math.PI * 0.14 * Math.max(0, -f) * Math.abs(f);
+  };
+  const dropAt = (phi) => {
+    const f = Math.cos(phi);                 // 1 앞, -1 뒤
+    const back = (1 - f) / 2;                // 0 앞, 1 뒤
+    /* 얼굴 앞만 짧고, 귀 옆부터 뒤까지는 고르게 길다.
+     * 지수로만 깎으면 뒤 한가운데만 뾰족하게 길어져 날개처럼 보인다.
+     * 0~0.42 구간에서 빠르게 올라가고 그 뒤로는 평평하게 둔다. */
+    const t = Math.min(1, back / 0.42);
+    return len * (t * t * (3 - 2 * t));
+  };
+
+  const sheet = (r, flip) => {
+    const base0 = pos.length / 3;
+    for (let iu = 0; iu <= NU; iu++) {
+      const u = iu / NU;
+      for (let ip = 0; ip <= NP; ip++) {
+        const phi = (ip / NP) * Math.PI * 2;
+        const tMax = capAt(phi), drop = dropAt(phi);
+        let x, y, z, nx, ny, nz;
+        if (u <= SPLIT || drop < 1e-4) {
+          const th = (Math.min(u, SPLIT) / SPLIT) * tMax;
+          const sx = Math.sin(th) * Math.sin(phi);
+          const sy = Math.cos(th);
+          const sz = Math.sin(th) * Math.cos(phi);
+          x = sx * r * 1.1; y = sy * r * 0.9; z = sz * r * 0.97;
+          nx = sx; ny = sy; nz = sz;
+        } else {
+          // 머리 끝에서 아래로. 끝으로 갈수록 살짝 모인다
+          const v = (u - SPLIT) / (1 - SPLIT);
+          const sx = Math.sin(tMax) * Math.sin(phi);
+          const sy = Math.cos(tMax);
+          const sz = Math.sin(tMax) * Math.cos(phi);
+          // 아래로 갈수록 몸 쪽으로 모인다. 안 모으면 치마처럼 퍼진다
+          // 아래로 갈수록 몸 쪽으로 모이되, 끝이 뾰족해지지 않게 조금만
+          const taper = 1 - 0.1 * v;
+          x = sx * r * 1.1 * taper;
+          y = sy * r * 0.9 - drop * v;
+          z = sz * r * 0.97 * taper;
+          const h = Math.hypot(sx, sz) || 1;
+          nx = sx / h; ny = -0.25; nz = sz / h;   // 옆을 보는 면
+        }
+        pos.push(x, y, z);
+        nor.push(flip ? -nx : nx, flip ? -ny : ny, flip ? -nz : nz);
+        /* 흔들림 가중치 — 두피에 붙은 데는 0, 끝으로 갈수록 1.
+         * 머리카락을 통째로 돌리면 두피에서 미끄러진다. 뿌리는 붙들고
+         * 끝만 흔들려야 머리카락처럼 보인다. 제곱으로 두어 중간보다
+         * 끝이 훨씬 많이 움직이게 한다. */
+        const w = u <= SPLIT ? 0 : Math.pow((u - SPLIT) / (1 - SPLIT), 1.4);
+        sway.push(w * (drop > 1e-4 ? 1 : 0));
+      }
+    }
+    for (let iu = 0; iu < NU; iu++) for (let ip = 0; ip < NP; ip++) {
+      const i0 = base0 + iu * (NP + 1) + ip;
+      const i1 = i0 + 1, i2 = i0 + NP + 1, i3 = i2 + 1;
+      if (flip) idx.push(i0, i1, i2, i1, i3, i2);
+      else idx.push(i0, i2, i1, i1, i2, i3);
+    }
+    return base0;
+  };
+  const o = sheet(rOut, false), i = sheet(rIn, true);
+  // 밑단 — 겉과 속을 이어 자른 단면을 만든다
+  const last = NU * (NP + 1);
+  for (let ip = 0; ip < NP; ip++) {
+    idx.push(o + last + ip, i + last + ip, o + last + ip + 1,
+             o + last + ip + 1, i + last + ip, i + last + ip + 1);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  g.setAttribute('sway', new THREE.Float32BufferAttribute(sway, 1));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  // 흔들 때마다 되돌아갈 자리를 따로 간직한다
+  g.userData.rest = Float32Array.from(g.attributes.position.array);
+  return g;
+}
+
+/* ---- 몸 치수 -------------------------------------------------------
+ *  키 1.65m, 머리가 40%. 몸통은 윗옷 + A라인 치마 — 캡슐 두 개를
+ *  포개는 것보다 실루엣이 훨씬 또렷하다.
+ * ------------------------------------------------------------------ */
+const HEAD_R = 0.34;
+const HEAD_Y = 1.30;
+const FACE_PHI = Math.PI * 0.44;
+const FACE_THETA = Math.PI * 0.40;
+const FACE_TOP = Math.PI * 0.34;
+
+/* 사람은 방보다 훨씬 평평하게 칠한다.
+ *  굴곡을 따라 명암이 줄줄 흐르면 깎은 나무처럼 보인다 — 목각인형 티의
+ *  정체가 그것이다. 두 단짜리 띠로 '밝다 / 아주 살짝 어둡다' 만 남기면
+ *  색종이를 오려 붙인 듯 평평해지고, 형태는 실루엣이 말해 준다. */
+const RAMP_FLAT = ramp(2, 0.84);
+/* 사람은 제 색을 절반쯤 스스로 낸다(emissive).
+ *  어둑한 극장 조명을 그대로 받으면 복숭아빛 피부가 갈색으로 눌린다 —
+ *  방 빛만으로는 화면에 0.57(중간 갈색)로 찍히고, 절반을 스스로 내면
+ *  0.83(복숭아)으로 살아난다. 재생 중 방이 어두워져도 사람은 또렷하게
+ *  남는데, 극장에서 캐릭터가 묻히지 않으니 오히려 바라던 쪽이다. */
+const flat = (c) => new THREE.MeshToonMaterial({
+  color: c, gradientMap: RAMP_FLAT,
+  emissive: c, emissiveIntensity: 0.5
+});
+
+function joint(x, y, z) {
+  const g = new THREE.Group();
+  g.position.set(x, y, z);
+  return g;
+}
 
 export function makeAvatar(opts) {
   const col = colorOf(opts.seed);
-  /* 방과 같은 띠로 칠한다 — 사람만 매끈하면 붙여 넣은 것처럼 겉돈다 */
-  const main = mat(col[0]);                    // 윗옷
-  const dark = mat(col[1]);                    // 아랫도리
-  const hairMat = mat(col[2] || col[1]);
-  const skin = mat(0xffe0c0);
-  const shoe = mat(0xf4f1ea);
+  const main = flat(col[0]);                   // 윗옷
+  const dark = flat(col[1]);                   // 치마
+  const hairMat = flat(col[2] || col[1]);
+  /* 동숲 피부 — 창백한 크림색이 아니라 따뜻한 복숭아빛이다 */
+  const skin = flat(0xffd8a9);
+  const shoe = flat(0x4a4038);
+  const white = flat(0xf7f3ec);
 
-  /* 얼굴 — 뜬 눈과 감은 눈 두 장을 만들어 두고 갈아 끼운다.
-   * 어둑한 방에서도 이목구비가 보여야 하므로 제가 조금 빛나게 둔다.
-   * 빛나는 정도를 같은 그림으로 눌러 줘서 눈동자는 검게 남는다. */
   let seedNum = 0;
   const sstr = String(opts.seed);
   for (let i = 0; i < sstr.length; i++) seedNum = (seedNum * 31 + sstr.charCodeAt(i)) | 0;
@@ -204,105 +434,117 @@ export function makeAvatar(opts) {
   const faceShut = faceTexture(seedNum, true, col[2] || col[1]);
   const faceMat = new THREE.MeshToonMaterial({
     map: faceOpen, emissive: 0xffffff, emissiveMap: faceOpen, emissiveIntensity: 0.3,
-    gradientMap: RAMP_SOFT, transparent: true, depthWrite: false
+    gradientMap: RAMP_FLAT, transparent: true, depthWrite: false
   });
 
   const root = new THREE.Group();
-  const body = new THREE.Group();     // 걸을 때 위아래로 들썩이는 부분
+  const body = new THREE.Group();
   root.add(body);
 
-  // 몸통 — 작고 동그랗게. 목 없이 머리가 바로 얹힌다
-  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.195, 0.2, 6, 16), main);
-  torso.position.y = 0.79;
+  /* 치마 — 허리에서 밑단으로 벌어지는 A라인. 돌림판(lathe)으로 깎는다 */
+  const skirtPts = [];
+  for (let i = 0; i <= 10; i++) {
+    const t = i / 10;
+    skirtPts.push(new THREE.Vector2(
+      0.145 + 0.165 * Math.pow(t, 1.2),        // 반지름 — 아래로 갈수록 벌어진다
+      0.74 - 0.36 * t                           // 높이 0.74 → 0.38 (무릎께)
+    ));
+  }
+  const skirt = new THREE.Mesh(new THREE.LatheGeometry(skirtPts, 40), dark);
+  body.add(skirt);
+  body.add(outlineOf(skirt, 0.04));            // 밑단의 어두운 테 — 레퍼런스의 그 선
+
+  /* 윗옷 — 치마 위에 얹히는 작은 몸통. 목둘레에 흰 깃 */
+  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.16, 0.16, 14, 36), main);
+  torso.position.y = 0.93;
+  torso.scale.set(1.02, 1, 0.88);
   body.add(torso);
-  // 옷단 — 윗옷과 아랫도리가 갈리는 자리
-  const hem = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.195, 0.07, 16), dark);
-  hem.position.y = 0.63;
-  body.add(hem);
+  const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.105, 0.125, 0.055, 24), white);
+  collar.position.y = 1.075;
+  body.add(collar);
 
-  // 다리 — 짧고 통통하게. 끝에 둥근 신발
-  const legGeo = new THREE.CapsuleGeometry(0.082, 0.14, 4, 12);
-  const legL = new THREE.Mesh(legGeo, dark); legL.position.set(-0.095, 0.24, 0);
-  const legR = new THREE.Mesh(legGeo, dark); legR.position.set(0.095, 0.24, 0);
-  body.add(legL, legR);
-  const legY = legL.position.y, legZ = legL.position.z;
-  const shoeGeo = new THREE.SphereGeometry(0.095, 12, 10);
-  const shoeL = new THREE.Mesh(shoeGeo, shoe); shoeL.scale.set(1, 0.72, 1.3);
-  const shoeR = new THREE.Mesh(shoeGeo, shoe); shoeR.scale.set(1, 0.72, 1.3);
-  shoeL.position.set(0, -0.12, 0.022); shoeR.position.set(0, -0.12, 0.022);
-  legL.add(shoeL); legR.add(shoeR);          // 다리에 붙여 같이 움직이게
+  /* 다리 — 치마 밑으로 살짝. 관절은 두되 짧다 */
+  const legs = [];
+  for (let sgn = -1; sgn <= 1; sgn += 2) {
+    const hip = joint(sgn * 0.068, 0.5, 0);
+    const thigh = new THREE.Mesh(new THREE.CapsuleGeometry(0.052, 0.07, 8, 20), skin);
+    thigh.position.y = -0.06; hip.add(thigh);
+    const knee = joint(0, -0.13, 0);
+    knee.rotation.x = 0.06;
+    const shin = new THREE.Mesh(new THREE.CapsuleGeometry(0.047, 0.07, 8, 20), skin);
+    shin.position.y = -0.055; knee.add(shin);
+    const foot = new THREE.Mesh(new THREE.SphereGeometry(0.065, 20, 14), shoe);
+    foot.scale.set(1, 0.6, 1.5);
+    foot.position.set(0, -0.125, 0.022); knee.add(foot);
+    hip.add(knee);
+    body.add(hip);
+    legs.push({ hip, knee });
+  }
 
-  // 팔 — 짧고, 끝에 벙어리장갑 같은 손
-  const armGeo = new THREE.CapsuleGeometry(0.062, 0.12, 4, 12);
-  const armL = new THREE.Mesh(armGeo, main); armL.position.set(-0.225, 0.84, 0);
-  const armR = new THREE.Mesh(armGeo, main); armR.position.set(0.225, 0.84, 0);
-  armL.rotation.z = 0.16; armR.rotation.z = -0.16;
-  body.add(armL, armR);
-  const handGeo = new THREE.SphereGeometry(0.083, 12, 10);
-  const handL = new THREE.Mesh(handGeo, skin); handL.position.y = -0.135;
-  const handR = new THREE.Mesh(handGeo, skin); handR.position.y = -0.135;
-  armL.add(handL); armR.add(handR);
+  /* 팔 — 몸에 붙여 가지런히. 소매 끝에 맨살 손 */
+  const arms = [];
+  for (let sgn = -1; sgn <= 1; sgn += 2) {
+    const sh = joint(sgn * 0.175, 1.0, 0);
+    sh.rotation.z = sgn * 0.12;
+    sh.rotation.x = -0.05;
+    const sleeve = new THREE.Mesh(new THREE.CapsuleGeometry(0.052, 0.07, 8, 20), main);
+    sleeve.position.y = -0.06; sh.add(sleeve);
+    const el = joint(0, -0.13, 0);
+    el.rotation.x = 0.14;
+    const fore = new THREE.Mesh(new THREE.CapsuleGeometry(0.044, 0.05, 8, 20), skin);
+    fore.position.y = -0.045; el.add(fore);
+    const hand = new THREE.Mesh(new THREE.SphereGeometry(0.058, 18, 14), skin);
+    hand.position.y = -0.1; el.add(hand);
+    sh.add(el);
+    body.add(sh);
+    arms.push({ sh, el, rz: sh.rotation.z, rx: sh.rotation.x, erx: el.rotation.x });
+  }
 
-  // 머리
+  /* 머리 */
   const head = new THREE.Group();
-  head.position.y = 1.33;
-  const skull = new THREE.Mesh(new THREE.SphereGeometry(HEAD_R, 24, 18), skin);
+  head.position.y = HEAD_Y;
+  const skull = new THREE.Mesh(headShape(HEAD_R), skin);
   head.add(skull);
 
-  // 얼굴 — 머리 앞쪽 구면에 감는다 (살갗보다 아주 조금 바깥)
   const face = new THREE.Mesh(
-    new THREE.SphereGeometry(HEAD_R * 1.012, 28, 20,
-      Math.PI / 2 - FACE_PHI / 2, FACE_PHI, FACE_TOP, FACE_THETA),
+    headShape(HEAD_R, {
+      p0: -FACE_PHI / 2, pLen: FACE_PHI,
+      t0: FACE_TOP, tLen: FACE_THETA, mul: 1.006
+    }),
     faceMat
   );
   face.renderOrder = 1;
   head.add(face);
 
-  /* 머리카락 — 두건처럼 덮기만 하면 가발이 된다. 셋으로 나눈다.
-   *    덮개   정수리에서 옆머리까지 통으로
-   *    뒷머리 뒤통수만 더 길게
-   *    앞머리 이마선에 뾰족한 가닥을 둘러 붙인다 — 이게 제일 티가 난다
-   *  가닥 끝은 눈 바로 위에서 멈춘다. 더 내려오면 눈을 가린다. */
-  const HAIR_R = HEAD_R * 1.035;
+  /* 귀 — 옆머리 갈래 사이로 빼꼼 보인다. 머리(x 1.1배)의 곡면에 붙인다 */
+  for (let sgn = -1; sgn <= 1; sgn += 2) {
+    /* 동물의 숲 귀 — 쫑긋하다. 머리에 묻히는 게 아니라 옆으로 내민
+     * 둥근 원판이다. 앞에서 보면 머리 실루엣 밖으로 동그라미가 나오고,
+     * 옆에서 보면 얇다. 뿌리만 머리에 심고 윗부분을 살짝 바깥으로 기울인다. */
+    const ear = new THREE.Mesh(new THREE.SphereGeometry(0.075, 20, 16), skin);
+    ear.scale.set(1, 1.08, 0.5);
+    ear.position.set(sgn * HEAD_R * 1.16, 0.0, -0.01);
+    ear.rotation.z = sgn * -0.22;                // 윗부분이 바깥을 보게 — 쫑긋
+    ear.rotation.y = sgn * 0.25;                 // 살짝 앞을 보게
+    head.add(ear);
+  }
+
+  /* 머리카락 — 두께 있는 덩어리 + 얼굴 양옆으로 내려오는 갈래 */
   const hair = new THREE.Mesh(
-    new THREE.SphereGeometry(HAIR_R, 26, 18, 0, Math.PI * 2, 0, Math.PI * 0.345),
+    longHair(HEAD_R * 1.015, HEAD_R * 1.17, 0.42 + (seedNum % 3) * 0.06),
     hairMat
   );
   head.add(hair);
-  const nape = new THREE.Mesh(
-    new THREE.SphereGeometry(HEAD_R * 1.028, 22, 16,
-      Math.PI * 1.12, Math.PI * 0.76, Math.PI * 0.2, Math.PI * 0.42),
-    hairMat
-  );
-  head.add(nape);
 
-  // 앞머리 가닥 — 이마선(정수리에서 62°)을 따라 아래로 뾰족하게
-  const FRINGE_T = Math.PI * 0.345;
-  const fy = HAIR_R * Math.cos(FRINGE_T);
-  const fr = HAIR_R * Math.sin(FRINGE_T);
-  for (let i = -4; i <= 4; i++) {
-    const a = i * 0.26;                       // 앞쪽 ±60° 에 아홉 가닥
-    const len = 0.17 - Math.abs(i) * 0.012;   // 가운데가 길다
-    const tuft = new THREE.Mesh(new THREE.ConeGeometry(0.062, len, 7), hairMat);
-    tuft.position.set(Math.sin(a) * fr, fy - len * 0.34, Math.cos(a) * fr);
-    tuft.rotation.x = Math.PI;                // 끝이 아래를 보게 뒤집는다
-    tuft.rotation.z = -Math.sin(a) * 0.5;     // 옆가닥은 바깥으로 눕는다
-    head.add(tuft);
-  }
-
-  /* 올림머리 — 다섯 중 둘은 정수리에 묶는다. 실루엣이 갈려야
-   * 멀리서도 누가 누군지 보인다. */
-  if (seedNum % 5 < 2) {
-    const bun = new THREE.Mesh(new THREE.SphereGeometry(0.115, 14, 12), hairMat);
-    bun.position.set(0, HEAD_R * 0.96, -0.03);
-    head.add(bun);
+  //  옆 갈래 — 가슴 앞까지 내려와 얼굴을 감싼다 (레퍼런스의 그 머리)
+  for (let sgn = -1; sgn <= 1; sgn += 2) {
+    const lock = new THREE.Mesh(new THREE.CapsuleGeometry(0.082, 0.3, 10, 22), hairMat);
+    lock.position.set(sgn * HEAD_R * 0.86, -0.32, 0.14);   // 귀 앞을 가리지 않게 조금 앞으로
+    lock.rotation.z = sgn * 0.05;
+    lock.scale.set(1, 1, 0.75);
+    head.add(lock);
   }
   body.add(head);
-
-  /* 손그림 선 — 몸피가 되는 덩어리에만 두른다. 머리카락·얼굴까지 두르면
-   * 이목구비가 뭉개진다. 방에는 두르지 않는다(배경에는 선을 긋지 않는다). */
-  [torso, legL, legR, armL, armR].forEach((m) => body.add(outlineOf(m, 0.085)));
-  head.add(outlineOf(skull, 0.055));
 
   // 발밑 그림자
   const shTex = (function () {
@@ -347,6 +589,70 @@ export function makeAvatar(opts) {
   let bubble = null, bubbleT = 0;
   const ph = Math.random() * 6.28;
   let stride = 0;
+
+  /* ---- 머리카락 흩날림 --------------------------------------------
+   *  걸으면 머리카락이 뒤로 끌리고, 돌면 바깥으로 쏠린다. 멈춰 있어도
+   *  아주 조금 흔들린다 — 완전히 멎어 있으면 가발로 보인다.
+   *
+   *  쏠림을 바로 따라가게 두면 뻣뻣하다. 용수철처럼 늦게 따라가고
+   *  지나쳤다 돌아오게 해야 '흩날린다' 로 보인다.
+   * ---------------------------------------------------------------- */
+  const swayAttr = hair.geometry.attributes.sway;
+  const hairPos = hair.geometry.attributes.position;
+  const hairRest = hair.geometry.userData.rest;
+  const sway = { x: 0, y: 0, z: 0, vx: 0, vz: 0 };
+  let lastDir = 0, lastX = 0, lastZ = 0, seeded = false;
+
+  function swayHair(p, dt, t, walking) {
+    /* 자세가 한 번이라도 어그러지면(NaN) 머리카락이 영영 사라진다 —
+     * 꼭짓점이 NaN 이 되면 되돌릴 길이 없다. 들어올 때 막는다. */
+    const num = (v) => (typeof v === 'number' && isFinite(v) ? v : 0);
+    const px = num(p && p.x), pz = num(p && p.z), pd = num(p && p.dir);
+    if (!seeded) { lastDir = pd; lastX = px; lastZ = pz; seeded = true; }
+    const h = Math.max(dt, 1 / 120);
+
+    // 얼마나 빨리 도는가 (짧은 쪽으로)
+    let dd = pd - lastDir;
+    while (dd > Math.PI) dd -= Math.PI * 2;
+    while (dd < -Math.PI) dd += Math.PI * 2;
+    lastDir = pd;
+    const turn = Math.max(-6, Math.min(6, dd / h));
+
+    // 얼마나 빨리 걷는가
+    const sp = Math.min(5, Math.hypot(px - lastX, pz - lastZ) / h);
+    lastX = px; lastZ = pz;
+
+    /* 가고 싶은 자리. 몸 기준이라 뒤는 -z 다.
+     *   돌면 바깥(= 도는 반대쪽)으로 쏠리고
+     *   걸으면 뒤로 끌리고
+     *   걸음 박자에 맞춰 좌우로 조금 흔들린다 */
+    const tx = -turn * 0.022 + (walking ? Math.sin(stride * 0.5) * 0.016 : 0)
+      + Math.sin(t * 0.9 + ph) * 0.005;
+    const tz = -sp * 0.03 + Math.sin(t * 1.1 + ph * 1.7) * 0.005;
+    const ty = (walking ? -Math.abs(Math.sin(stride)) * 0.016 : 0)
+      + Math.sin(t * 1.4 + ph) * 0.004;
+
+    // 용수철 — 늦게 따라가고 지나쳤다 돌아온다
+    const K = 48, D = 9;
+    sway.vx += ((tx - sway.x) * K - sway.vx * D) * h;
+    sway.vz += ((tz - sway.z) * K - sway.vz * D) * h;
+    sway.x += sway.vx * h;
+    sway.z += sway.vz * h;
+    sway.y += (ty - sway.y) * Math.min(1, h * 10);
+    // 너무 휘둘리지 않게
+    sway.x = Math.max(-0.12, Math.min(0.12, sway.x));
+    sway.z = Math.max(-0.12, Math.min(0.12, sway.z));
+
+    const arr = hairPos.array, w = swayAttr.array;
+    for (let i = 0; i < w.length; i++) {
+      const k = i * 3, g = w[i];
+      if (g === 0) continue;                 // 뿌리는 붙박이
+      arr[k] = hairRest[k] + sway.x * g;
+      arr[k + 1] = hairRest[k + 1] + sway.y * g;
+      arr[k + 2] = hairRest[k + 2] + sway.z * g;
+    }
+    hairPos.needsUpdate = true;
+  }
 
   const api = {
     root: root,
@@ -412,32 +718,57 @@ export function makeAvatar(opts) {
 
       const sitting = p.st === 2;
       const walking = p.st === 1 && !sitting;
-      stride += dt * (walking ? 11 : 0);
+      stride += dt * (walking ? 9.5 : 0);
       const sw = Math.sin(stride);
-      legL.rotation.x = walking ? sw * 0.6 : 0;
-      legR.rotation.x = walking ? -sw * 0.6 : 0;
-      armL.rotation.x = walking ? -sw * 0.5 : 0;
-      armR.rotation.x = walking ? sw * 0.5 : 0;
       const air = !sitting && ((p.y || 0) - (p.fy || 0)) > 0.03;
-      body.position.y = air ? 0.02 : (walking ? Math.abs(Math.sin(stride)) * 0.045 : Math.sin(t * 1.6 + ph) * 0.012);
-      if (air) {                                 // 공중에서는 다리를 모으고 팔을 든다
-        legL.rotation.x = -0.35; legR.rotation.x = 0.2;
-        armL.rotation.x = -0.9; armR.rotation.x = -0.9;
-      }
-      if (sitting) {
-        // 엉덩이를 방석 높이로 내리고 허벅지를 앞으로 접는다
-        body.position.y = -0.235;
-        legL.position.set(-0.095, legY + 0.16, legZ - 0.13);
-        legR.position.set(0.095, legY + 0.16, legZ - 0.13);
-        legL.rotation.x = legR.rotation.x = -1.32;
-        armL.rotation.x = armR.rotation.x = -0.22;
-      } else if (legL.position.z !== legZ) {
-        legL.position.set(-0.095, legY, legZ);
-        legR.position.set(0.095, legY, legZ);
-      }
+      const k = Math.min(1, dt * 14);
+      const ease = (j, axis, want) => { j.rotation[axis] += (want - j.rotation[axis]) * k; };
+
+      /* 걸음 — 넓적다리가 앞뒤로 흔들리고, 무릎은 '뒤로만' 접힌다.
+       * 무릎을 안 접으면 막대가 흔들리는 꼴이라 로봇처럼 보인다.
+       * 팔도 어깨와 팔꿈치를 엇갈린 박자로 움직인다. */
+      legs.forEach((L, i) => {
+        const ph2 = i ? Math.PI : 0;
+        const sg = Math.sin(stride + ph2);
+        if (sitting) {
+          ease(L.hip, 'x', -1.32); ease(L.knee, 'x', 1.25);
+        } else if (air) {
+          ease(L.hip, 'x', i ? 0.18 : -0.3); ease(L.knee, 'x', 0.55);
+        } else if (walking) {
+          ease(L.hip, 'x', sg * 0.52);
+          // 뒤로 간 다리일 때만 무릎이 접힌다 (앞으로 꺾이지 않게)
+          ease(L.knee, 'x', 0.07 + Math.max(0, -Math.sin(stride + ph2 + 0.7)) * 0.72);
+        } else {
+          ease(L.hip, 'x', 0); ease(L.knee, 'x', 0.07);
+        }
+      });
+      arms.forEach((A, i) => {
+        const ph2 = i ? 0 : Math.PI;            // 팔은 다리와 반대
+        const sg = Math.sin(stride + ph2);
+        if (sitting) {
+          ease(A.sh, 'x', -0.18); ease(A.el, 'x', 0.42);
+        } else if (air) {
+          ease(A.sh, 'x', -0.95); ease(A.el, 'x', 0.5);
+        } else if (walking) {
+          ease(A.sh, 'x', A.rx + sg * 0.42);
+          ease(A.el, 'x', A.erx + Math.max(0, sg) * 0.3);
+          // 흔들 때 팔이 몸에 붙었다 떨어졌다 한다
+          ease(A.sh, 'z', A.rz + sg * 0.05 * (i ? -1 : 1));
+        } else {
+          ease(A.sh, 'x', A.rx); ease(A.el, 'x', A.erx); ease(A.sh, 'z', A.rz);
+        }
+      });
+
+      body.position.y = air ? 0.02
+        : (walking ? Math.abs(sw) * 0.042 : Math.sin(t * 1.6 + ph) * 0.012);
+      if (sitting) body.position.y = -0.235;
+      // 걸을 때 몸이 좌우로 아주 조금 기운다 — 이게 있어야 살아 움직인다
+      body.rotation.z = walking ? sw * 0.035 : 0;
+      body.rotation.y = walking ? sw * 0.07 : 0;
       /* 고개는 몸을 따라간다 — 늘 걸어가는 쪽을 본다.
        * 걸을 때 좌우로 아주 조금 갸웃하는 것만 남긴다. */
       head.rotation.z = walking ? sw * 0.04 : Math.sin(t * 1.2 + ph) * 0.02;
+      if (!hidden) swayHair(p, dt, t, walking);   // 안 보이면 계산하지 않는다
 
       /* 눈 깜빡임 — 눈꺼풀을 따로 두지 않고 '감은 얼굴' 로 바꿔 끼운다 */
       const shut = Math.sin(t * 0.8 + ph * 3) > 0.985;

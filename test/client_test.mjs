@@ -236,7 +236,38 @@ world.scene.traverse((o) => {
 ok('산타·루돌프에는 테두리가 있다', onChar > 0, onChar + '줄');
 ok('가구와 벽에는 테두리가 없다', onRoom === 0,
   onRoom ? onRoom + '줄이 배경에 붙었다' : '없음');
-await step('움직여도 안 터진다', () => { who.update(0.016, 1.0); });
+// update 는 자세 객체를 받는다. 숫자를 넘기면 조용히 NaN 이 번진다
+await step('움직여도 안 터진다',
+  () => { who.update({ x: 0, y: 0, z: 0, dir: 0, st: 1, fy: 0 }, 0.016, 1.0, false); });
+
+/* 머리카락 흩날림 — 뿌리는 두피에 붙어 있고 끝만 흔들려야 한다.
+ * 통째로 돌리면 머리카락이 두피에서 미끄러져 가발처럼 보인다. */
+let hairMesh = null;
+if (who) who.root.traverse((o) => { if (o.isMesh && o.geometry.attributes.sway) hairMesh = o; });
+ok('머리카락에 흔들림 가중치가 있다', !!hairMesh,
+  hairMesh ? hairMesh.geometry.attributes.sway.count + '꼭짓점' : '없음');
+if (hairMesh) {
+  const w = hairMesh.geometry.attributes.sway.array;
+  const snap = () => Float32Array.from(hairMesh.geometry.attributes.position.array);
+  for (let i = 0; i < 60; i++) who.update({ x: 0, y: 0, z: 0, dir: 0, st: 0, fy: 0 }, 0.016, i * 0.016, false);
+  const still = snap();
+  let x = 0, z = 0, dir = 0;
+  for (let i = 0; i < 60; i++) {
+    dir += 0.03; z += 0.05;
+    who.update({ x: x, y: 0, z: z, dir: dir, st: 1, fy: 0 }, 0.016, (60 + i) * 0.016, false);
+  }
+  const moved = snap();
+  let maxRoot = 0, maxTip = 0;
+  for (let i = 0; i < w.length; i++) {
+    const k = i * 3;
+    const d = Math.hypot(moved[k] - still[k], moved[k + 1] - still[k + 1], moved[k + 2] - still[k + 2]);
+    if (w[i] === 0) maxRoot = Math.max(maxRoot, d);
+    else if (w[i] > 0.8) maxTip = Math.max(maxTip, d);
+  }
+  ok('뿌리는 두피에 붙어 있다', maxRoot < 1e-6, maxRoot.toFixed(5) + 'm');
+  ok('걸으면 머리끝이 흩날린다', maxTip > 0.01, maxTip.toFixed(3) + 'm');
+  ok('너무 휘둘리지는 않는다', maxTip < 0.3, maxTip.toFixed(3) + 'm');
+}
 /* 색은 이름에서 뽑는다 — 같은 이름이면 늘 같은 색이어야 하고(남의 화면에서도
  * 같아야 한다), 여러 이름이 한 색으로 몰리면 안 된다. 두 사람만 비교하면
  * 우연히 같은 색이 나와 애먼 실패가 난다. */
