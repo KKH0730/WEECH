@@ -12,6 +12,7 @@ import { makeAvatar, colorOf } from './avatar3d.js';
 import * as TV from './youtube.js';
 import * as Voice from './voice.js';
 import * as Pitch from './pitch.js';
+import * as Npc from './npc.js';
 
 const R = ROOM3D;
 const $ = (id) => document.getElementById(id);
@@ -25,6 +26,10 @@ const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 renderer.setClearColor(0x000000, 0);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
+/* ACES 를 쓴다. 한때 '셀 셰이딩의 단을 뭉갠다' 고 보고 Linear 로 바꿨는데,
+ * 실제로 일어난 일은 방이 통째로 밝아진 것이었다. ACES 는 어두운 쪽을
+ * 0.2 배 가까이 눌러 주는데, 그걸 걷으니 어둑하던 극장이 대낮이 됐다.
+ * 단은 ACES 아래에서도 또렷하다 — 눌러도 칸 사이 간격은 남는다. */
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = R.LIGHT.exposure;
 webglHost.appendChild(renderer.domElement);
@@ -432,7 +437,8 @@ function connect() {
           if (!g) g = addOther({ id: id, name: a[5], x: a[1], y: a[2] });
           g.tx = a[1] / 100; g.tz = a[2] / 100; g.tdir = a[3]; g.st = a[4];
           g.ty = (a[6] || 0) / 100;
-          g.hy = a[7] || 0; g.hp = a[8] || 0;        // 고개 각도 (시선)
+          // a[7] a[8] 은 옛 고개 각도 자리 — 이제 늘 0 이다. 뒤의 번호가
+          // 밀리지 않게 자리만 남겨 둔다.
           if (a[5] && a[5] !== g.name) { g.name = a[5]; g.av.setName(a[5]); }
           const gone = !!a[9];
           if (g.gone !== gone) { g.gone = gone; g.av.setGone(gone); }
@@ -585,6 +591,7 @@ function connect() {
         const was = room.idx;
         room.idx = m.idx; room.playing = m.playing;
         room.position = m.position; room.serverNow = m.serverNow;
+        syncClock(m.serverNow);
         applyPlayback();
         if (was !== room.idx) { pitchReset(); requestMelody(); }
         break;
@@ -2474,6 +2481,7 @@ window.addEventListener('keydown', (e) => {
   if (tag === 'INPUT' || tag === 'TEXTAREA') return;
 
   if (e.key === 'Escape') {
+    if (talkWith) { endTalk(); return; }        // 대화부터 닫는다
     if (!$('helpModal').hidden || !$('playlistPanel').hidden) {
       $('helpModal').hidden = true; $('playlistPanel').hidden = true;
     } else if (cam.mode === 'watch') setWatchMode(false);
@@ -2490,6 +2498,16 @@ window.addEventListener('keydown', (e) => {
   if (e.key === ' ') { jump(); e.preventDefault(); return; }
   const k = e.key.toLowerCase();
   if (k === 'f') { shootForward(); e.preventDefault(); return; }
+  if (k === 'e') {                       // 산타·루돌프에게 말 걸기
+    if (talkWith) endTalk(); else if (nearNpc) startTalk(nearNpc);
+    return;
+  }
+  // 대화 중에는 숫자키로 고른다 — 목록에 번호를 붙여 둔 이유다
+  if (talkWith && k >= '1' && k <= '9') {
+    pickTopic(+k - 1);
+    e.preventDefault();
+    return;
+  }
   if (k === 'v') { setWatchMode(cam.mode !== 'watch'); return; }
   if (k === 'm' && karaoke) { toggleMic(); return; }      // 노래방 — 마이크 토글
   keys[k] = true;
@@ -2690,6 +2708,224 @@ function spawnDart(m) {
   darts.push(d);
   if (darts.length > 80) { const old = darts.shift(); scene.remove(old.obj); }
 }
+
+/* ================================================================== */
+/* 산타와 루돌프                                                       */
+/* ================================================================== */
+
+/* 서버 시계와의 차이. NPC 자리는 '시각의 함수' 라, 사람마다 시계가
+ * 어긋나면 산타가 다른 자리에 서 있게 된다. 방 소식에 실려 오는
+ * serverNow 로 한 번씩 맞춘다. */
+let clockSkew = 0;
+function syncClock(serverNow) {
+  if (!serverNow) return;
+  clockSkew = serverNow - Date.now();
+}
+const npcClock = () => (Date.now() + clockSkew) / 1000;
+
+/* 화면에 보이는 자리 — 계산된 자리로 부드럽게 따라간다.
+ * 말을 거는 동안에는 그 자리에 멈춰 선다. 내 화면에서만 멈추는 것이라
+ * 남의 화면에서는 계속 걷지만, 대화가 끝나면 제자리로 돌아온다. */
+const npcView = Npc.NPCS.map((n) => ({
+  def: n, grp: null, x: 0, z: 0, yaw: 0, ready: false
+}));
+let talkWith = null;              // 지금 말 거는 상대 (없으면 null)
+let nearNpc = null;               // 손 닿는 거리에 있는 상대
+
+function stepNpcs(dt) {
+  const t = npcClock();
+  let best = null, bestD = Npc.REACH;
+
+  for (const v of npcView) {
+    if (!v.grp) v.grp = world.npcs && world.npcs[v.def.kind];
+    if (!v.grp) continue;
+
+    const held = (talkWith === v.def.id);
+    const pose = Npc.poseAt(v.def, t);
+    if (!v.ready) { v.x = pose.x; v.z = pose.z; v.yaw = pose.yaw; v.ready = true; }
+
+    if (held) {
+      // 말을 거는 동안에는 걸음을 멈추고 나를 본다
+      const dx = me.x - v.x, dz = me.z - v.z;
+      const want = Math.atan2(dx, dz);
+      let d = want - v.yaw;
+      while (d > Math.PI) d -= Math.PI * 2;
+      while (d < -Math.PI) d += Math.PI * 2;
+      v.yaw += d * Math.min(1, dt * 6);
+    } else {
+      // 계산된 자리로 따라붙는다 (대화 뒤 돌아올 때도 이 길로)
+      const k = Math.min(1, dt * 2.6);
+      v.x += (pose.x - v.x) * k;
+      v.z += (pose.z - v.z) * k;
+      let d = pose.yaw - v.yaw;
+      while (d > Math.PI) d -= Math.PI * 2;
+      while (d < -Math.PI) d += Math.PI * 2;
+      v.yaw += d * Math.min(1, dt * 5);
+    }
+
+    v.grp.position.set(v.x, 0, v.z);
+    v.grp.rotation.y = v.yaw;
+
+    /* 걸음 — 다리를 앞뒤로 젓고 몸을 들썩인다.
+     * 멈춰 있을 때는 다리를 제자리로 되돌리고 숨만 쉰다. */
+    const moving = !held && pose.walking;
+    const sw = Math.sin(pose.stride);
+    const inner = v.grp.children[0];
+    if (inner && inner.isGroup) {
+      inner.position.y = moving ? Math.abs(sw) * 0.05 : Math.sin(t * 1.2 + v.def.seed) * 0.012;
+    }
+    const parts = v.grp.userData || {};
+    const k = Math.min(1, dt * 9);
+    (parts.legs || []).forEach((h, i) => {
+      // 네 발이면 대각선끼리 짝지어(pair), 두 발이면 좌우 번갈아
+      const phase = (h.userData.pair !== undefined ? h.userData.pair : i) % 2;
+      const want = moving ? Math.sin(pose.stride + phase * Math.PI) * 0.55 : 0;
+      h.rotation.x += (want - h.rotation.x) * k;
+    });
+    (parts.arms || []).forEach((h, i) => {
+      const want = moving ? Math.sin(pose.stride + (i % 2) * Math.PI) * -0.45 : 0;
+      h.rotation.x += (want - h.rotation.x) * k;
+    });
+
+    const dist = Math.hypot(me.x - v.x, me.z - v.z);
+    if (dist < bestD) { bestD = dist; best = v; }
+  }
+
+  nearNpc = best ? best.def : null;
+  updateNpcTip();
+  placeBubble();
+
+  // 너무 멀어지면 대화가 저절로 끝난다
+  if (talkWith) {
+    const v = npcView.find((n) => n.def.id === talkWith);
+    if (v && Math.hypot(me.x - v.x, me.z - v.z) > Npc.REACH * 2.4) endTalk();
+  }
+}
+
+/* 말풍선을 NPC 머리 위에 붙인다. 3D 자리를 화면 좌표로 옮기고,
+ * 가장자리를 넘지 않게 민다. 민 만큼 꼬리는 반대로 당겨 NPC 를 계속
+ * 가리키게 한다. 카메라 뒤로 돌아가면 왼쪽 아래에 내려앉힌다. */
+const bubbleVec = new THREE.Vector3();
+function placeBubble() {
+  const el = $('npcTalk');
+  if (!el || el.hidden) return;
+  const v = npcView.find((n) => n.def.id === talkWith);
+  if (!v) return;
+
+  bubbleVec.set(v.x, v.def.headY || 2.0, v.z).project(camera);
+  if (bubbleVec.z > 1) { el.classList.add('docked'); return; }   // 카메라 뒤
+  el.classList.remove('docked');
+
+  const sx = (bubbleVec.x * 0.5 + 0.5) * innerWidth;
+  const sy = (-bubbleVec.y * 0.5 + 0.5) * innerHeight;
+  const w = el.offsetWidth, h = el.offsetHeight;
+  const pad = 12;
+  const left = clamp(sx, pad + w / 2, innerWidth - pad - w / 2);
+  const top = clamp(sy - 14, pad + h, innerHeight - pad);
+  el.style.left = Math.round(left) + 'px';
+  el.style.top = Math.round(top) + 'px';
+  // 꼬리는 밀린 만큼 되돌려 NPC 를 가리킨다
+  el.style.setProperty('--tail-x',
+    Math.round(clamp(sx - (left - w / 2), 14, w - 14)) + 'px');
+}
+
+function updateNpcTip() {
+  const el = $('npcTip');
+  if (!el) return;
+  const show = !!nearNpc && !talkWith && screen === 'room' && cam.mode !== 'cinema';
+  if (!show) { el.hidden = true; return; }
+  if (el.hidden || el.dataset.who !== nearNpc.id) {
+    el.dataset.who = nearNpc.id;
+    $('npcTipT').textContent = nearNpc.icon + ' ' + nearNpc.name + ' 에게 말 걸기';
+  }
+  el.hidden = false;
+}
+
+/* ---- 대화 ---- */
+function startTalk(def) {
+  if (!def) return;
+  talkWith = def.id;
+  $('ntIc').textContent = def.icon;
+  $('ntName').textContent = def.name;
+  talkPath = [];
+  setSay([Npc.helloOf(def)]);
+  renderAsk();
+  $('npcTalk').hidden = false;
+  updateNpcTip();
+}
+
+function endTalk() {
+  talkWith = null;
+  $('npcTalk').hidden = true;
+  updateNpcTip();
+}
+
+/* 말풍선이라 쌓지 않고 갈아 끼운다. 쌓으면 금세 화면을 덮는다. */
+function setSay(lines) {
+  const box = $('ntSay');
+  box.innerHTML = lines.map((l) => '<p>' + esc(l) + '</p>').join('');
+  box.scrollTop = 0;
+}
+
+/* 지금 어느 갈래 안에 들어와 있나 (빈 배열이면 첫 목록) */
+let talkPath = [];
+
+function talkNode() {
+  const def = Npc.NPCS.find((n) => n.id === talkWith);
+  let list = def ? Npc.topicsOf(def) : [];
+  for (const i of talkPath) {
+    const t = list[i];
+    if (!t || !t.kids) return list;
+    list = t.kids;
+  }
+  return list;
+}
+
+/* 고를 것을 번호 붙여 늘어놓는다. 갈래 안이면 '돌아가기' 를 끝에 붙인다 —
+ * 자료에 적어 두지 않고 여기서 붙이는 쪽이, 갈래를 늘릴 때 잊지 않는다. */
+function renderAsk() {
+  const box = $('ntList');
+  const list = talkNode();
+  let html = list.map((t, i) =>
+    '<li><button data-i="' + i + '"' + (t.bye ? ' class="quiet"' : '') + '>' +
+    '<b>' + (i + 1) + '</b><span>' + esc(t.q) + '</span></button></li>'
+  ).join('');
+  if (talkPath.length) {
+    html += '<li><button data-back="1" class="quiet">' +
+      '<b>' + (list.length + 1) + '</b><span>(돌아가기)</span></button></li>';
+  }
+  box.innerHTML = html;
+}
+
+/* n번째를 고른다 (0부터). 숫자키와 눌림이 모두 여기로 온다 */
+function pickTopic(n) {
+  if (!talkWith) return;
+  const list = talkNode();
+  if (n === list.length && talkPath.length) {      // 돌아가기
+    talkPath.pop();
+    renderAsk();
+    return;
+  }
+  const t = list[n];
+  if (!t) return;
+  if (t.kids) {                                    // 한 겹 들어간다
+    talkPath.push(n);
+    setSay([t.q + ' 말이지. 어느 쪽이 궁금해?']);
+    renderAsk();
+    return;
+  }
+  setSay(t.a);
+  renderAsk();
+  if (t.bye) setTimeout(endTalk, 1100);
+}
+
+$('ntList').addEventListener('click', (e) => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  pickTopic(b.dataset.back ? talkNode().length : +b.dataset.i);
+});
+$('ntClose').addEventListener('click', endTalk);
+$('npcTip').addEventListener('click', () => startTalk(nearNpc));
 
 function updateDarts(dt) {
   for (let i = darts.length - 1; i >= 0; i--) {
@@ -2935,7 +3171,12 @@ function update(dt, now) {
     const p = R.collide(nx, nz, 0.26, me.y);
     if (Math.abs(p.x - me.x) < 0.0005 && Math.abs(p.z - me.z) < 0.0005) moveTarget = null;
     me.x = p.x; me.z = p.z;
-    me.dir = Math.atan2(vx, vz);
+    /* 가는 쪽으로 몸을 돌린다. 곧바로 꺾으면 제자리에서 홱 도는 것처럼
+     * 보이므로 짧은 쪽으로 조금씩 돌린다. */
+    let turn = Math.atan2(vx, vz) - me.dir;
+    while (turn > Math.PI) turn -= Math.PI * 2;
+    while (turn < -Math.PI) turn += Math.PI * 2;
+    me.dir += turn * Math.min(1, dt * 14);
     me.st = 1;
   } else if (!seated) me.st = 0;
 
@@ -2969,6 +3210,7 @@ function update(dt, now) {
   }
 
   updateDarts(dt);
+  stepNpcs(dt);
 
   /* 화각을 목표치로 부드럽게 옮긴다. 1인칭이 아닐 때는 늘 기본값으로
    * 되돌아간다 — 당겨 둔 채로 3인칭·전체화면에 가면 프레이밍이 깨진다. */
@@ -3024,21 +3266,10 @@ function update(dt, now) {
   camera.position.copy(camPos);
   camera.lookAt(camAim);
 
-  // 시선(카메라 회전)에 따라 고개를 돌린다 — 몸 기준 상대 각도로 계산
-  {
-    let lookYaw, lookPitch;
-    if (cam.mode === 'watch') { lookYaw = cam.yaw; lookPitch = cam.look; }
-    else if (cam.mode === 'cinema') {
-      // 시네마 중엔 내 아바타가 TV 를 바라보게 (다른 사람 화면에서 보임)
-      lookYaw = Math.atan2(world.tvTransform.x - me.x, world.tvTransform.z - me.z);
-      lookPitch = 0;
-    } else { lookYaw = cam.yaw + Math.PI; lookPitch = cam.pitch - Math.PI / 2; }
-    let ry = lookYaw - me.dir;
-    while (ry > Math.PI) ry -= Math.PI * 2;
-    while (ry < -Math.PI) ry += Math.PI * 2;
-    me.hy = Math.max(-1.3, Math.min(1.3, ry));
-    me.hp = Math.max(-0.55, Math.min(0.55, -lookPitch));
-  }
+  /* 고개는 돌리지 않는다. 한때 카메라가 보는 쪽을 따라가게 해 뒀는데,
+   * 카메라는 아바타 둘레를 돌고 몸은 마지막으로 걸은 쪽을 보고 서 있어서
+   * 그 차이만큼 고개가 '늘' 꺾여 있었다 — 등 뒤(180°)에서만 0° 였다.
+   * 아바타는 언제나 제 몸이 보는 쪽, 곧 걸어가는 쪽을 본다. */
 
   if (myAvatar) myAvatar.update(me, dt, now / 1000, cam.mode !== 'lounge');
   for (const g of others.values()) {
@@ -3050,8 +3281,7 @@ function update(dt, now) {
     sendAt = now;
     send({
       t: 'm', x: toNet(me.x), y: toNet(me.z),
-      dir: Math.round(me.dir * 100) / 100, st: me.st, h: toNet(me.y),
-      hy: Math.round(me.hy * 100) / 100, hp: Math.round(me.hp * 100) / 100
+      dir: Math.round(me.dir * 100) / 100, st: me.st, h: toNet(me.y)
     });
   }
 }

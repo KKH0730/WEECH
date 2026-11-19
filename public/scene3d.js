@@ -6,6 +6,7 @@
  *  → 벽에 걸린 TV 가 원근까지 맞아떨어진다.
  * ------------------------------------------------------------------ */
 import * as THREE from 'three';
+import { mat, box, C, RAMP_SOFT, outlineOf } from './toon.js';
 
 const R = ROOM3D;
 
@@ -18,20 +19,6 @@ function canvasTex(THREE_, w, h, draw) {
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 4;
   return { tex: t, canvas: c };
-}
-
-function mat(color, rough, metal) {
-  return new THREE.MeshStandardMaterial({
-    color: color,
-    roughness: rough === undefined ? 0.92 : rough,
-    metalness: metal === undefined ? 0.02 : metal
-  });
-}
-
-function box(w, h, d, material, x, y, z) {
-  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
-  m.position.set(x, y, z);
-  return m;
 }
 
 /* 발밑/가구 밑에 깔리는 가짜 그림자.
@@ -61,33 +48,47 @@ function blob(radius, opacity) {
 export function buildScene() {
   const scene = new THREE.Scene();
   scene.background = null;
-  scene.fog = new THREE.Fog(0x14121a, 32, 72);   // 넓고 높은 방 — 안개를 더 멀리
+  //  멀어질수록 따뜻한 공기에 묻힌다 (차갑게 두면 수채 느낌이 안 난다)
+  scene.fog = new THREE.Fog(0x14121a, 30, 86);   // 예전 색 그대로
 
   const collidables = [];     // 화살이 꽂힐 수 있는 것들
   const api = { scene: scene, collidables: collidables, lampLights: [], tvLight: null };
 
   /* ---------------- 바닥 ---------------- */
+  /* 널마다 색을 조금씩 달리하고, 결은 붓으로 쓸 듯 성기게 긋는다.
+   * 고르게 그으면 인쇄물처럼 보여 손맛이 죽는다. */
   const floorTex = canvasTex(THREE, 512, 512, (g, w, h) => {
-    g.fillStyle = '#4a3b33'; g.fillRect(0, 0, w, h);
-    for (let i = 0; i < 8; i++) {
-      g.fillStyle = i % 2 ? '#523f36' : '#45372f';
-      g.fillRect(0, i * (h / 8), w, h / 8 - 2);
+    const hex = (v) => '#' + v.toString(16).padStart(6, '0');
+    g.fillStyle = hex(C.plankA); g.fillRect(0, 0, w, h);
+    const rows = 8, rh = h / rows;
+    for (let i = 0; i < rows; i++) {
+      const t = (Math.sin(i * 2.7) * 0.5 + 0.5);
+      g.fillStyle = hex(t > 0.5 ? C.plankA : C.plankB);
+      g.globalAlpha = 0.75 + t * 0.25;
+      g.fillRect(0, i * rh, w, rh - 2);
+      g.globalAlpha = 1;
+      // 나뭇결 — 길이와 굵기를 들쭉날쭉하게
+      for (let k = 0; k < 7; k++) {
+        const y = i * rh + 4 + Math.random() * (rh - 10);
+        const x0 = Math.random() * w, len = 40 + Math.random() * 150;
+        g.strokeStyle = 'rgba(94,63,43,' + (0.07 + Math.random() * 0.1) + ')';
+        g.lineWidth = 1 + Math.random() * 1.6;
+        g.beginPath();
+        g.moveTo(x0, y);
+        g.bezierCurveTo(x0 + len * 0.4, y - 2, x0 + len * 0.7, y + 2, x0 + len, y);
+        g.stroke();
+      }
     }
-    g.strokeStyle = 'rgba(0,0,0,.22)'; g.lineWidth = 2;
-    for (let i = 0; i <= 8; i++) {
-      g.beginPath(); g.moveTo(0, i * (h / 8)); g.lineTo(w, i * (h / 8)); g.stroke();
-    }
-    for (let i = 0; i < 30; i++) {
-      g.strokeStyle = 'rgba(0,0,0,.08)';
-      const x = Math.random() * w, y = Math.floor(Math.random() * 8) * (h / 8);
-      g.beginPath(); g.moveTo(x, y); g.lineTo(x, y + h / 8); g.stroke();
+    g.strokeStyle = 'rgba(70,46,30,.4)'; g.lineWidth = 2.5;
+    for (let i = 0; i <= rows; i++) {
+      g.beginPath(); g.moveTo(0, i * rh); g.lineTo(w, i * rh); g.stroke();
     }
   });
   floorTex.tex.wrapS = floorTex.tex.wrapT = THREE.RepeatWrapping;
   floorTex.tex.repeat.set(4, 3);
   const floor = new THREE.Mesh(
     new THREE.PlaneGeometry(R.W, R.D),
-    new THREE.MeshStandardMaterial({ map: floorTex.tex, roughness: 0.95 })
+    new THREE.MeshToonMaterial({ map: floorTex.tex, gradientMap: RAMP_SOFT })
   );
   floor.rotation.x = -Math.PI / 2;
   floor.name = 'floor';
@@ -95,7 +96,28 @@ export function buildScene() {
   collidables.push(floor);
 
   /* ---------------- 벽 / 천장 ---------------- */
-  const wallMat = mat(0x262031, 0.95);
+  /* 회벽 — 위로 갈수록 환해지고, 흙손 자국이 얼룩덜룩 남아 있다 */
+  const wallTex = canvasTex(THREE, 256, 512, (g, w, h) => {
+    const hex = (v) => '#' + v.toString(16).padStart(6, '0');
+    const grd = g.createLinearGradient(0, h, 0, 0);
+    grd.addColorStop(0, hex(C.plaster));
+    grd.addColorStop(1, hex(C.plasterTop));
+    g.fillStyle = grd; g.fillRect(0, 0, w, h);
+    for (let i = 0; i < 90; i++) {
+      g.fillStyle = 'rgba(255,245,225,' + (0.015 + Math.random() * 0.05) + ')';
+      const x = Math.random() * w, y = Math.random() * h;
+      const rw = 20 + Math.random() * 70, rh2 = 10 + Math.random() * 30;
+      g.beginPath(); g.ellipse(x, y, rw, rh2, Math.random() * 3.14, 0, 6.3); g.fill();
+    }
+    for (let i = 0; i < 50; i++) {
+      g.fillStyle = 'rgba(96,70,48,' + (0.02 + Math.random() * 0.05) + ')';
+      const x = Math.random() * w, y = Math.random() * h;
+      g.beginPath(); g.ellipse(x, y, 15 + Math.random() * 50, 8 + Math.random() * 22, Math.random() * 3.14, 0, 6.3); g.fill();
+    }
+  });
+  wallTex.tex.wrapS = wallTex.tex.wrapT = THREE.RepeatWrapping;
+  wallTex.tex.repeat.set(3, 1);
+  const wallMat = new THREE.MeshToonMaterial({ map: wallTex.tex, gradientMap: RAMP_SOFT });
   const wallDefs = [
     { w: R.W, x: 0, y: R.H / 2, z: -R.D / 2, ry: 0 },             // 북 (TV)
     { w: R.W, x: 0, y: R.H / 2, z: R.D / 2, ry: Math.PI },        // 남
@@ -111,13 +133,13 @@ export function buildScene() {
     collidables.push(m);
   });
 
-  const ceil = new THREE.Mesh(new THREE.PlaneGeometry(R.W, R.D), mat(0x241f2d, 0.95));
+  const ceil = new THREE.Mesh(new THREE.PlaneGeometry(R.W, R.D), mat(C.ceiling, 0.95));
   ceil.rotation.x = Math.PI / 2;
   ceil.position.y = R.H;
   scene.add(ceil);
 
   // 걸레받이
-  const baseMat = mat(0x201b28, 0.9);
+  const baseMat = mat(C.base, 0.9);
   scene.add(box(R.W, 0.14, 0.06, baseMat, 0, 0.07, -R.D / 2 + 0.03));
   scene.add(box(R.W, 0.14, 0.06, baseMat, 0, 0.07, R.D / 2 - 0.03));
   scene.add(box(0.06, 0.14, R.D, baseMat, -R.W / 2 + 0.03, 0.07, 0));
@@ -125,13 +147,20 @@ export function buildScene() {
 
   /* ---------------- 카펫 ---------------- */
   const carpetTex = canvasTex(THREE, 256, 256, (g, w, h) => {
-    g.fillStyle = '#6d272c'; g.fillRect(0, 0, w, h);
-    g.strokeStyle = 'rgba(226,178,120,.28)'; g.lineWidth = 6;
+    g.fillStyle = '#5c201b'; g.fillRect(0, 0, w, h);        // 바랜 주홍 — 예전 카펫과 같은 밝기
+    // 보풀 — 고르게 칠하면 비닐장판처럼 보인다
+    for (let i = 0; i < 400; i++) {
+      g.fillStyle = 'rgba(' + (Math.random() > 0.5 ? '255,210,170,' : '90,24,22,') + (0.03 + Math.random() * 0.07) + ')';
+      g.beginPath();
+      g.ellipse(Math.random() * w, Math.random() * h, 3 + Math.random() * 10, 2 + Math.random() * 5, Math.random() * 3.14, 0, 6.3);
+      g.fill();
+    }
+    g.strokeStyle = 'rgba(240,205,150,.42)'; g.lineWidth = 7;
     g.strokeRect(16, 16, w - 32, h - 32);
-    g.strokeStyle = 'rgba(226,178,120,.14)'; g.lineWidth = 3;
-    g.strokeRect(30, 30, w - 60, h - 60);
+    g.strokeStyle = 'rgba(240,205,150,.2)'; g.lineWidth = 3;
+    g.strokeRect(32, 32, w - 64, h - 64);
   });
-  const carpetMat = new THREE.MeshStandardMaterial({ map: carpetTex.tex, roughness: 1 });
+  const carpetMat = new THREE.MeshToonMaterial({ map: carpetTex.tex, gradientMap: RAMP_SOFT });
   (R.CARPETS || [R.CARPET]).forEach((c) => {
     if (!c) return;
     const rug = new THREE.Mesh(new THREE.BoxGeometry(c.w, 0.02, c.d), carpetMat);
@@ -312,45 +341,64 @@ export function buildScene() {
   });
 
   /* ---------------- 액자 (왼쪽 벽) ---------------- */
-  R.frames.forEach((f, i) => {
-    const at = onWall(f, 0);
-    const art = canvasTex(THREE, 256, 256, (g, w, h) => {
-      const grd = g.createLinearGradient(0, 0, 0, h);
-      grd.addColorStop(0, 'hsl(' + f.hue + ',42%,38%)');
-      grd.addColorStop(1, 'hsl(' + ((f.hue + 45) % 360) + ',34%,16%)');
-      g.fillStyle = grd; g.fillRect(0, 0, w, h);
-      g.fillStyle = 'rgba(255,255,255,.16)';
-      if (i % 2) {
-        g.beginPath(); g.arc(w * 0.66, h * 0.33, w * 0.14, 0, 6.2832); g.fill();
-        g.fillRect(0, h * 0.64, w, h * 0.36);
-      } else {
-        g.beginPath();
-        g.moveTo(w * 0.1, h * 0.88); g.lineTo(w * 0.5, h * 0.26); g.lineTo(w * 0.9, h * 0.88);
-        g.closePath(); g.fill();
-      }
-    });
-    const pic = new THREE.Mesh(
-      new THREE.PlaneGeometry(f.w * 0.84, f.h * 0.84),
-      new THREE.MeshStandardMaterial({ map: art.tex, roughness: 0.8 })
-    );
-    pic.position.z = R.FACE_Z;
-    const frame = box(f.w, f.h, R.BOX_DEPTH, mat(0x6a5540, 0.75), 0, 0, 0);
-    const grp = new THREE.Group();
-    grp.add(pic); grp.add(frame);
-    grp.position.set(at.x, at.y, at.z);
-    grp.rotation.y = at.ry;
-    grp.name = 'frame';
-    scene.add(grp);
-    collidables.push(pic, frame);
+
+  /* ---------------- 벽에 거는 리스 ----------------
+   *  잎을 한 겹으로 두르면 도넛처럼 보인다. 반지름과 각도를 조금씩
+   *  어긋나게 해서 두 겹으로 둘러야 수북해 보인다. */
+  const pineMat = mat(C.pine, 0.95), pineHiMat = mat(C.pineHi, 0.95);
+  const redMat = mat(C.xRed, 0.8), redHiMat = mat(C.xRedHi, 0.8);
+  const goldMat = mat(C.xGold, 0.45, 0.5);
+
+  (R.wreaths || []).forEach((w, i) => {
+    const at = onWall(w, 0.1);
+    const g = new THREE.Group();
+    const leaves = Math.round(w.r * 44);
+    for (let k = 0; k < leaves; k++) {
+      const a = (k / leaves) * Math.PI * 2;
+      const layer = k % 2;
+      const rr = w.r * (0.86 + layer * 0.16);
+      const leaf = new THREE.Mesh(new THREE.SphereGeometry(w.r * 0.21, 6, 5),
+        layer ? pineMat : pineHiMat);
+      leaf.position.set(Math.cos(a) * rr, Math.sin(a) * rr, (layer ? -0.03 : 0.03));
+      leaf.scale.set(1.5, 0.75, 0.75);
+      leaf.rotation.z = a + 1.2;
+      g.add(leaf);
+    }
+    // 빨간 열매 — 드문드문
+    for (let k = 0; k < 7; k++) {
+      const a = k * 2.399 + i;
+      const b = new THREE.Mesh(new THREE.SphereGeometry(w.r * 0.095, 7, 6), redHiMat);
+      b.position.set(Math.cos(a) * w.r * 0.95, Math.sin(a) * w.r * 0.95, 0.07);
+      g.add(b);
+    }
+    // 아래쪽 리본 — 고리 둘과 꼬리 둘
+    for (let s = -1; s <= 1; s += 2) {
+      const loop = new THREE.Mesh(new THREE.TorusGeometry(w.r * 0.2, w.r * 0.07, 6, 12), redMat);
+      loop.position.set(s * w.r * 0.2, -w.r * 1.0, 0.06);
+      loop.rotation.z = s * 0.5;
+      g.add(loop);
+      const tail = box(w.r * 0.13, w.r * 0.52, 0.04, redMat, s * w.r * 0.26, -w.r * 1.36, 0.05);
+      tail.rotation.z = s * 0.35;
+      g.add(tail);
+    }
+    const knot = new THREE.Mesh(new THREE.SphereGeometry(w.r * 0.1, 8, 7), goldMat);
+    knot.position.set(0, -w.r * 1.0, 0.1); g.add(knot);
+
+    g.position.set(at.x, at.y, at.z);
+    g.rotation.y = at.ry;
+    g.name = 'wreath';
+    g.traverse((o) => { if (o.isMesh) collidables.push(o); });
+    scene.add(g);
   });
 
   /* ---------------- 가구 ---------------- */
-  const fabric = mat(0x5e4a6b, 0.95);
-  const fabric2 = mat(0x6f5880, 0.95);
-  const dark = mat(0x3b3146, 0.9);
-  const wood = mat(0x5a4132, 0.85);
-  const riser = mat(0x2a2430, 0.95);
-  const wood2 = mat(0x75563f, 0.8);
+  const fabric = mat(C.seat, 0.95);
+  const fabric2 = mat(C.seatHi, 0.95);
+  const dark = mat(C.frame, 0.9);
+  const wood = mat(C.wood, 0.85);
+  const riser = mat(C.riser, 0.95);     // 단상 몸통
+  const tierMat = mat(C.tier, 0.95);    // 객석 단 · 통로 계단 (바닥과 같은 밝기)
+  const wood2 = mat(C.woodHi, 0.8);
 
   /* 모드에 따라 오르내리는 가구를 여기 모은다.
    *   영화관 : 의자는 바닥 아래로 내려가고, 단은 높이가 0 으로 줄어든다
@@ -358,6 +406,143 @@ export function buildScene() {
    * 충돌은 roomdef 가 모드 바뀌는 즉시 갈아 끼우고, 여기서는 보이는 것만 맡는다. */
   const modeFurn = [];
   const doors = [];           // 의자가 내려갈 때 바닥에 열리는 어두운 구멍
+
+  /* ---------------- 산타와 루돌프 ----------------
+   *  가구가 아니라 돌아다니는 것들이라 따로 짓는다. 자리는 npc.js 가
+   *  시각으로부터 계산해서 game.js 가 매 프레임 옮겨 준다.
+   *  여기서는 '어떻게 생겼나' 만 만든다. */
+  /* 다리를 그냥 돌리면 허리께가 축이 되어 땅을 파고든다.
+   * 엉덩이 자리에 빈 그룹을 두고 다리를 거기 매달아, 그 그룹을 돌린다. */
+  function hinge(x, y, z) {
+    const h = new THREE.Group();
+    h.position.set(x, y, z);
+    return h;
+  }
+
+  function buildNpc(kind) {
+    const g = new THREE.Group();
+    const legs = [], arms = [];
+    if (kind === 'santa') {
+      /* 산타 — 아바타와 같은 2등신. 방이 아니라 사람 쪽 밝기로 칠한다. */
+      const red = mat(C.xRed, 0.85), fur = mat(C.xSnow, 0.9);
+      const belt = mat(C.belt, 0.6), skin = mat(C.skin, 0.9);
+      const eye = new THREE.MeshBasicMaterial({ color: 0x3a2a22 });
+      const body = new THREE.Group(); g.add(body);
+      api.santaBody = body;
+
+      const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.25, 0.3, 6, 14), red);
+      torso.position.y = 0.74; body.add(torso);
+      const hem = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.3, 0.1, 14), fur);
+      hem.position.y = 0.56; body.add(hem);
+      body.add(box(0.5, 0.11, 0.3, belt, 0, 0.73, 0));
+      body.add(box(0.12, 0.13, 0.04, mat(C.xGold, 0.4, 0.6), 0, 0.73, 0.15));
+      // 수염 — 턱 아래를 덮는 덩어리
+      const beard = new THREE.Mesh(new THREE.SphereGeometry(0.2, 12, 10), fur);
+      beard.position.set(0, 1.08, 0.1); beard.scale.set(1, 1.15, 0.8); body.add(beard);
+
+      const legGeo = new THREE.CapsuleGeometry(0.085, 0.18, 4, 10);
+      for (let s = -1; s <= 1; s += 2) {
+        const hip = hinge(s * 0.11, 0.375, 0);
+        const l = new THREE.Mesh(legGeo, belt); l.position.y = -0.175; hip.add(l);
+        body.add(hip); legs.push(hip);
+
+        const sh = hinge(s * 0.29, 0.95, 0);
+        const arm = new THREE.Mesh(new THREE.CapsuleGeometry(0.07, 0.2, 4, 10), red);
+        arm.position.y = -0.17; sh.add(arm);
+        const cuff = new THREE.Mesh(new THREE.SphereGeometry(0.085, 8, 7), fur);
+        cuff.position.y = -0.31; sh.add(cuff);
+        sh.rotation.z = s * 0.2;
+        body.add(sh); arms.push(sh);
+      }
+
+      const head = new THREE.Group(); head.position.y = 1.28; body.add(head);
+      const skull = new THREE.Mesh(new THREE.SphereGeometry(0.23, 18, 14), skin); head.add(skull);
+      const nose = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 7), mat(C.xRedHi, 0.8));
+      nose.position.set(0, -0.03, 0.21); head.add(nose);
+      for (let s = -1; s <= 1; s += 2) {
+        const e = new THREE.Mesh(new THREE.SphereGeometry(0.032, 8, 7), eye);
+        e.position.set(s * 0.082, 0.05, 0.2); e.scale.z = 0.6; head.add(e);
+      }
+      // 모자 — 원뿔을 앞으로 기울이고 흰 테와 방울을 단다
+      const hat = new THREE.Mesh(new THREE.ConeGeometry(0.235, 0.46, 12), red);
+      hat.position.set(0, 0.3, -0.03); hat.rotation.x = -0.3; head.add(hat);
+      const brim = new THREE.Mesh(new THREE.TorusGeometry(0.225, 0.055, 7, 16), fur);
+      brim.position.y = 0.14; brim.rotation.x = Math.PI / 2; head.add(brim);
+      const pom = new THREE.Mesh(new THREE.SphereGeometry(0.085, 10, 8), fur);
+      pom.position.set(0, 0.5, -0.16); head.add(pom);
+
+      body.add(outlineOf(torso, 0.07));
+      head.add(outlineOf(skull, 0.06));
+
+    } else {
+      /* 루돌프 — 네 발로 선 몸통. 코는 스스로 빛난다. */
+      const coat = mat(C.deerCoat, 0.9), belly = mat(C.deerBelly, 0.9);
+      const horn = mat(C.antler, 0.8);
+      const eye = new THREE.MeshBasicMaterial({ color: 0x3a2a22 });
+      const body = new THREE.Group(); g.add(body);
+      api.deerBody = body;
+
+      const trunkM = new THREE.Mesh(new THREE.CapsuleGeometry(0.33, 0.62, 6, 14), coat);
+      trunkM.rotation.z = Math.PI / 2; trunkM.position.set(0, 0.95, 0); body.add(trunkM);
+      const bel = new THREE.Mesh(new THREE.CapsuleGeometry(0.26, 0.5, 6, 12), belly);
+      bel.rotation.z = Math.PI / 2; bel.position.set(0, 0.84, 0.06); body.add(bel);
+
+      /* 네 다리는 대각선끼리 짝지어 움직인다(속보). 같은 쪽 둘이 함께
+       * 나가면 비틀거리는 것처럼 보인다. 짝 번호를 적어 둔다. */
+      const legGeo = new THREE.CapsuleGeometry(0.075, 0.5, 4, 10);
+      [[-0.42, -0.2, 0], [-0.42, 0.2, 1], [0.42, -0.2, 1], [0.42, 0.2, 0]].forEach((p) => {
+        const hip = hinge(p[0], 0.695, p[1]);
+        const l = new THREE.Mesh(legGeo, coat);
+        l.position.y = -0.325; hip.add(l);
+        const hoof = new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.09, 0.1, 8), mat(C.belt, 0.7));
+        hoof.position.y = -0.635; hip.add(hoof);
+        hip.userData.pair = p[2];
+        body.add(hip); legs.push(hip);
+      });
+
+      // 목과 머리 — 앞쪽(-x)으로 쳐든다
+      const neck = new THREE.Mesh(new THREE.CapsuleGeometry(0.15, 0.34, 5, 10), coat);
+      neck.position.set(-0.6, 1.2, 0); neck.rotation.z = 0.5; body.add(neck);
+      const head = new THREE.Group(); head.position.set(-0.82, 1.46, 0); body.add(head);
+      const skull = new THREE.Mesh(new THREE.SphereGeometry(0.2, 14, 12), coat);
+      skull.scale.set(1.25, 0.95, 0.9); head.add(skull);
+      const muzzle = new THREE.Mesh(new THREE.SphereGeometry(0.12, 10, 9), belly);
+      muzzle.position.set(-0.17, -0.05, 0); muzzle.scale.set(1.1, 0.85, 0.85); head.add(muzzle);
+      const nose = new THREE.Mesh(new THREE.SphereGeometry(0.075, 12, 10), mat(0xff4a46, 0.4));
+      nose.material.emissive = new THREE.Color(0xff3b36);
+      nose.material.emissiveIntensity = 1.4;
+      nose.position.set(-0.28, -0.05, 0); head.add(nose);
+      api.deerNose = nose;
+      for (let s = -1; s <= 1; s += 2) {
+        const e = new THREE.Mesh(new THREE.SphereGeometry(0.034, 8, 7), eye);
+        e.position.set(-0.07, 0.06, s * 0.15); head.add(e);
+        const ear = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 7), coat);
+        ear.position.set(0.05, 0.1, s * 0.2); ear.scale.set(0.5, 1, 1.5); head.add(ear);
+        // 뿔 — 기둥 하나에 가지 둘
+        const base = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.045, 0.36, 6), horn);
+        base.position.set(0.02, 0.26, s * 0.1); base.rotation.z = -0.25; base.rotation.x = s * 0.3;
+        head.add(base);
+        for (let b = 0; b < 2; b++) {
+          const br = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.03, 0.2, 5), horn);
+          br.position.set(-0.02 + b * 0.09, 0.4 + b * 0.1, s * (0.14 + b * 0.05));
+          br.rotation.z = 0.7 - b * 0.4; br.rotation.x = s * 0.5;
+          head.add(br);
+        }
+      }
+      const tail = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 7), belly);
+      tail.position.set(0.68, 1.06, 0); body.add(tail);
+      body.add(outlineOf(trunkM, 0.06));
+      head.add(outlineOf(skull, 0.06));
+    }
+    /* 루돌프는 머리가 -x 쪽에 붙어 있다 — 그대로 두면 옆걸음으로 걷는다.
+     * 몸을 통째로 90° 돌려 모두가 '+z 를 본다' 는 약속에 맞춘다. */
+    if (kind === 'deer') g.children[0].rotation.y = Math.PI / 2;
+
+    g.name = kind;
+    g.userData.legs = legs;
+    g.userData.arms = arms;
+    return g;
+  }
 
   R.furniture.forEach((f) => {
     const g = new THREE.Group();
@@ -376,8 +561,100 @@ export function buildScene() {
     } else if (f.type === 'step' || f.type === 'stair') {
       // 뒷줄을 한 단 올리는 단, 그리고 통로를 오르내리는 작은 계단.
       // 윗면만 보이면 되므로 상자 하나에 코끝 유도등을 붙인다.
-      g.add(box(f.w, Math.max(0.02, f.top), f.d, riser, 0, f.top / 2, 0));
+      g.add(box(f.w, Math.max(0.02, f.top), f.d, tierMat, 0, f.top / 2, 0));
       g.add(box(f.w, 0.02, 0.05, mat(0xd98d4e, 0.4), 0, f.top + 0.01, -f.d / 2 + 0.03));
+    } else if (f.type === 'tree') {
+      /* 크리스마스 트리. 원뿔 하나로 두면 고깔모자가 된다 — 네 단으로
+       * 겹치고 단마다 조금 돌려 두면 가지가 층층이 뻗은 것처럼 보인다.
+       * 면을 각지게(flatShading) 깎아 툰 음영이 단마다 갈라지게 한다. */
+      const T = R.XMAS.tree;
+      const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.24, 0.8, 10), mat(C.trunk, 0.95));
+      trunk.position.y = 0.4; g.add(trunk);
+      const skirt = new THREE.Mesh(new THREE.CylinderGeometry(T.r * 0.62, T.r * 0.7, 0.09, 20), redMat);
+      skirt.position.y = 0.045; g.add(skirt);           // 밑동을 덮는 천
+
+      const TIERS = 4;
+      for (let k = 0; k < TIERS; k++) {
+        const t = k / TIERS;
+        const rad = T.r * (1 - t * 0.66);
+        const hh = (T.h - 0.8) / TIERS * 1.5;
+        const cone = new THREE.Mesh(
+          new THREE.ConeGeometry(rad, hh, 9, 1, false),
+          k % 2 ? pineMat : pineHiMat
+        );
+        cone.geometry.computeVertexNormals();
+        cone.material.flatShading = true;
+        cone.position.y = 0.7 + t * (T.h - 0.8) * 0.92 + hh / 2;
+        cone.rotation.y = k * 0.42;
+        g.add(cone);
+      }
+
+      // 장식공 — 가지 끝선을 따라 걸린다
+      const ornMats = [redHiMat, goldMat, mat(C.xSnow, 0.5, 0.3), mat(C.xBlue, 0.5, 0.3), mat(C.xPink, 0.5, 0.3)];
+      for (let k = 0; k < 26; k++) {
+        const a = k * 2.399;
+        const t = 0.06 + (k / 26) * 0.82;
+        const rad = T.r * (1 - t * 0.78) * 0.92;
+        const o = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 7), ornMats[k % ornMats.length]);
+        o.position.set(Math.cos(a) * rad, 0.95 + t * (T.h - 1.4), Math.sin(a) * rad);
+        g.add(o);
+      }
+
+      // 꼭대기 별
+      const star = new THREE.Mesh(new THREE.OctahedronGeometry(0.34, 0), goldMat.clone());
+      star.material.emissive = new THREE.Color(0xffd36b);
+      star.material.emissiveIntensity = 1.1;
+      star.position.y = T.h + 0.1;
+      star.scale.set(1, 1.5, 0.55);
+      g.add(star);
+      api.xmasStar = star;
+
+      /* 꼬마전구 — 알알이 메시로 두면 백 덩이가 된다. 한 덩이(Points)로
+       * 그리고 색만 알알이 달리 준다. */
+      const N = 90, pos = new Float32Array(N * 3), col = new Float32Array(N * 3);
+      const bulbCols = [[1, .85, .5], [1, .4, .35], [.5, .9, 1], [.6, 1, .6], [1, .75, .9]];
+      for (let k = 0; k < N; k++) {
+        const t = 0.04 + (k / N) * 0.9;
+        const a = k * 0.92;                       // 나선으로 감는다
+        const rad = T.r * (1 - t * 0.8) * 0.98;
+        pos[k * 3] = Math.cos(a) * rad;
+        pos[k * 3 + 1] = 0.9 + t * (T.h - 1.3);
+        pos[k * 3 + 2] = Math.sin(a) * rad;
+        const c = bulbCols[k % bulbCols.length];
+        col[k * 3] = c[0]; col[k * 3 + 1] = c[1]; col[k * 3 + 2] = c[2];
+      }
+      const bgeo = new THREE.BufferGeometry();
+      bgeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      bgeo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+      const bulbs = new THREE.Points(bgeo, new THREE.PointsMaterial({
+        size: 0.17, vertexColors: true, transparent: true, depthWrite: false,
+        blending: THREE.AdditiveBlending, sizeAttenuation: true, opacity: 0.9
+      }));
+      g.add(bulbs);
+      api.xmasBulbs = bulbs;
+
+      // 트리가 제 주변만 은은히 밝힌다 (재생 중에는 같이 잦아든다)
+      const tl = new THREE.PointLight(0xffc06a, 2.2, 9, 2);
+      tl.position.y = T.h * 0.45;
+      tl.userData.base = 2.2;
+      g.add(tl);
+      api.lampLights.push(tl);
+    } else if (f.type === 'gift') {
+      /* 선물상자 — 몸통 + 십자 리본 + 꼭대기 고리 둘 */
+      const hues = [C.xRed, C.xGold, C.xBlue, C.xSnow, C.xPink];
+      const body = mat(hues[f.hue % hues.length], 0.8);
+      const tape = mat(hues[(f.hue + 2) % hues.length], 0.6, 0.3);
+      const hgt = f.top;
+      g.add(box(f.w, hgt, f.d, body, 0, hgt / 2, 0));
+      g.add(box(f.w * 0.16, hgt + 0.012, f.d + 0.012, tape, 0, hgt / 2, 0));
+      g.add(box(f.w + 0.012, hgt + 0.012, f.d * 0.16, tape, 0, hgt / 2, 0));
+      for (let s = -1; s <= 1; s += 2) {
+        const loop = new THREE.Mesh(new THREE.TorusGeometry(f.w * 0.17, f.w * 0.055, 6, 10), tape);
+        loop.position.set(s * f.w * 0.16, hgt + f.w * 0.1, 0);
+        loop.rotation.y = Math.PI / 2;
+        loop.rotation.x = s * 0.4;
+        g.add(loop);
+      }
     } else if (f.type === 'stage') {
       /* 스크린 아래 단상. 옆면은 어둡게 두고 모서리에만 놋쇠 띠를 둘러
        * 붉은 카펫과 경계가 서게 한다. 윗면은 카펫이 덮으므로 비워 둔다. */
@@ -449,15 +726,41 @@ export function buildScene() {
         }
       }
     } else if (f.type === 'plant') {
-      const pot = new THREE.Mesh(new THREE.CylinderGeometry(0.21, 0.16, 0.34, 14), mat(0x8a5436, 0.9));
-      pot.position.y = 0.17; g.add(pot);
-      const leafMat = mat(0x3f7a4a, 0.95);
-      for (let i = 0; i < 7; i++) {
-        const a = (i / 7) * Math.PI * 2;
-        const leaf = new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 8), leafMat);
-        leaf.position.set(Math.cos(a) * 0.17, 0.56 + (i % 3) * 0.14, Math.sin(a) * 0.17);
-        leaf.scale.set(1, 0.7, 1);
+      /* 잎을 몇 장 꽂아 두면 플라스틱 화초가 된다. 지브리의 풀은 늘
+       * 무성하고, 잎마다 초록이 다르고, 끝이 제 무게로 늘어진다. */
+      const pot = new THREE.Mesh(new THREE.CylinderGeometry(0.23, 0.17, 0.36, 16), mat(C.pot, 0.9));
+      pot.position.y = 0.18; g.add(pot);
+      const lip = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 0.05, 16), mat(C.pot, 0.8));
+      lip.position.y = 0.355; g.add(lip);
+      const soil = new THREE.Mesh(new THREE.CylinderGeometry(0.21, 0.21, 0.03, 14), mat(0x4a3526, 1));
+      soil.position.y = 0.37; g.add(soil);
+
+      const leafMats = C.leaf.map((c) => mat(c, 0.95));
+      const N = 22;
+      for (let i = 0; i < N; i++) {
+        const a = i * 2.399;                       // 황금각 — 뭉치지 않고 고루 퍼진다
+        const up = i / N;                          // 위로 갈수록 작고 안쪽
+        const out = 0.3 * (1 - up * 0.55);
+        const leaf = new THREE.Mesh(new THREE.SphereGeometry(0.17, 8, 6), leafMats[i % leafMats.length]);
+        leaf.position.set(Math.cos(a) * out, 0.46 + up * 0.72, Math.sin(a) * out);
+        leaf.scale.set(1.45 - up * 0.5, 0.3, 0.75 - up * 0.2);   // 납작한 잎
+        leaf.rotation.y = -a;
+        leaf.rotation.z = 0.5 - up * 0.95;         // 아래 잎일수록 많이 늘어진다
         g.add(leaf);
+      }
+      // 쑥 솟은 줄기 둘 — 실루엣에 높낮이를 준다
+      for (let i = 0; i < 2; i++) {
+        const a = i * 2.2 + 0.7;
+        const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.018, 0.55, 6), leafMats[3]);
+        stem.position.set(Math.cos(a) * 0.1, 0.95, Math.sin(a) * 0.1);
+        stem.rotation.z = Math.cos(a) * 0.3;
+        stem.rotation.x = -Math.sin(a) * 0.3;
+        g.add(stem);
+        const tip = new THREE.Mesh(new THREE.SphereGeometry(0.13, 8, 6), leafMats[2]);
+        tip.position.set(Math.cos(a) * 0.24, 1.22, Math.sin(a) * 0.24);
+        tip.scale.set(1.5, 0.26, 0.7);
+        tip.rotation.y = -a; tip.rotation.z = 0.75;
+        g.add(tip);
       }
     } else if (f.type === 'speaker') {
       g.add(box(0.34, 1.0, 0.3, mat(0x1d1a22, 0.8), 0, 0.5, 0));
@@ -470,7 +773,7 @@ export function buildScene() {
 
     /* 그림자는 묶음 안에 넣는다 — 가구가 바닥으로 내려갈 때 같이 따라가야 한다.
      * 광선 검사(collidables)에 들어가면 안 되므로 traverse 뒤에 붙인다. */
-    if (f.type !== 'step' && f.type !== 'stair') {
+    if (f.type !== 'step' && f.type !== 'stair' && f.type !== 'gift') {
       const rad = Math.max(f.w, f.d) * 0.6;
       const sh = blob(rad, 0.55);
       sh.scale.set(f.w * 0.8 / (rad * 2), f.d * 1.1 / (rad * 2), 1);
@@ -499,27 +802,40 @@ export function buildScene() {
     }
   });
 
+  /* 둘을 세워 둔다. 자리는 game.js 가 매 프레임 넣어 준다 —
+   * 여기서 정해 두면 사람마다 다른 자리에 서게 된다. */
+  api.npcs = {};
+  ['santa', 'deer'].forEach((kind) => {
+    const g = buildNpc(kind);
+    g.traverse((o) => { if (o.isMesh && !(o.userData && o.userData.isOutline)) collidables.push(o); });
+    const sh = blob(0.62, 0.5);
+    sh.position.y = 0.014;
+    g.add(sh);
+    scene.add(g);
+    api.npcs[kind] = g;
+  });
+
   /* ---------------- 천장 코브 조명 ---------------- */
-  const C = R.COVE;
+  const COVE = R.COVE;   // 색판 C 와 이름이 겹치지 않게
   const coveMat = new THREE.MeshBasicMaterial({ color: 0xcdb896 });
   const coveLipMat = mat(0x241f2c, 0.9);
-  const ci = C.inset;
+  const ci = COVE.inset;
   [
-    { w: R.W - ci * 2, d: C.w, x: 0, z: -R.D / 2 + ci },
-    { w: R.W - ci * 2, d: C.w, x: 0, z: R.D / 2 - ci },
-    { w: C.w, d: R.D - ci * 2, x: -R.W / 2 + ci, z: 0 },
-    { w: C.w, d: R.D - ci * 2, x: R.W / 2 - ci, z: 0 }
+    { w: R.W - ci * 2, d: COVE.w, x: 0, z: -R.D / 2 + ci },
+    { w: R.W - ci * 2, d: COVE.w, x: 0, z: R.D / 2 - ci },
+    { w: COVE.w, d: R.D - ci * 2, x: -R.W / 2 + ci, z: 0 },
+    { w: COVE.w, d: R.D - ci * 2, x: R.W / 2 - ci, z: 0 }
   ].forEach((b) => {
     // 빛나는 띠
-    scene.add(box(b.w, 0.05, b.d, coveMat, b.x, C.y, b.z));
+    scene.add(box(b.w, 0.05, b.d, coveMat, b.x, COVE.y, b.z));
     // 아래를 가리는 턱 — 광원이 직접 보이지 않고 천장만 밝아 보이게
-    scene.add(box(b.w + 0.1, 0.16, b.d + 0.1, coveLipMat, b.x, C.y - 0.12, b.z));
+    scene.add(box(b.w + 0.1, 0.16, b.d + 0.1, coveLipMat, b.x, COVE.y - 0.12, b.z));
   });
 
   R.CEIL_LIGHTS.forEach((p) => {
     const l = new THREE.PointLight(0xffe9d0, R.LIGHT.ceil, 30, 2);
     l.userData.base = R.LIGHT.ceil;        // 재생 중에 낮출 때 돌아올 자리
-    l.position.set(p.x, C.y + 0.18, p.z);
+    l.position.set(p.x, COVE.y + 0.18, p.z);
     scene.add(l);
     api.lampLights.push(l);
   });
@@ -629,7 +945,42 @@ export function buildScene() {
   cineGrp.add(beam);          // 빔도 함께 걷힌다
   api.beam = beam;
 
+  /* ---- 떠다니는 먼지 --------------------------------------------------
+   *  지브리 실내에는 언제나 빛줄기 속에 먼지가 떠 있다. 이것 하나로
+   *  '공기가 있는 방' 이 된다. 점 하나씩 그리면 느리므로 한 덩이로 그린다. */
+  const dust = (function () {
+    const N = 220;
+    const pos = new Float32Array(N * 3);
+    const seed = new Float32Array(N);
+    for (let i = 0; i < N; i++) {
+      pos[i * 3] = (Math.random() - 0.5) * (R.W - 2);
+      pos[i * 3 + 1] = 0.5 + Math.random() * (R.H - 1.5);
+      pos[i * 3 + 2] = (Math.random() - 0.5) * (R.D - 2);
+      seed[i] = Math.random() * 100;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    const { tex } = canvasTex(THREE, 32, 32, (g, w) => {
+      const grd = g.createRadialGradient(w / 2, w / 2, 0, w / 2, w / 2, w / 2);
+      grd.addColorStop(0, 'rgba(255,240,215,.95)');
+      grd.addColorStop(0.5, 'rgba(255,230,190,.35)');
+      grd.addColorStop(1, 'rgba(255,220,170,0)');
+      g.fillStyle = grd; g.fillRect(0, 0, w, w);
+    });
+    const pts = new THREE.Points(geo, new THREE.PointsMaterial({
+      map: tex, size: 0.085, transparent: true, depthWrite: false,
+      blending: THREE.AdditiveBlending, sizeAttenuation: true, opacity: 0.32
+    }));
+    pts.frustumCulled = false;
+    scene.add(pts);
+    return { pts: pts, pos: pos, seed: seed, n: N, base: Float32Array.from(pos) };
+  })();
+  api.dust = dust;
+
   /* ---------------- 조명 ---------------- */
+  /* 예전 그대로. 방향광(햇빛)을 더해 봤다가 걷었다 — 거리에 상관없이
+   * 방 전체를 똑같이 비추는 탓에, 점광원이 닿지 않아 어둡던 구석까지
+   * 환해져 재생 전후의 밝기 차이가 묻혔다. */
   const ambient = new THREE.AmbientLight(0x322e42, R.LIGHT.ambient);
   scene.add(ambient);
   api.ambient = ambient;
@@ -881,6 +1232,37 @@ export function buildScene() {
         l.intensity = l.userData.base * dimT;
       }
     }
+
+    /* 먼지 — 아주 천천히 떠오르며 좌우로 흔들린다. 천장에 닿으면 바닥에서
+     * 다시 올라온다. 위치를 통째로 다시 쓰는 대신 기준점에서 흔들어
+     * 계산을 줄인다. */
+    if (api.dust) {
+      const d = api.dust, p = d.pos, b = d.base;
+      for (let i = 0; i < d.n; i++) {
+        const s = d.seed[i];
+        const rise = (t * 0.12 + s * 0.37) % (R.H - 1.2);
+        p[i * 3] = b[i * 3] + Math.sin(t * 0.33 + s) * 0.5;
+        p[i * 3 + 1] = 0.5 + rise;
+        p[i * 3 + 2] = b[i * 3 + 2] + Math.cos(t * 0.27 + s * 1.7) * 0.5;
+      }
+      d.pts.geometry.attributes.position.needsUpdate = true;
+    }
+
+    /* 크리스마스 — 전구가 알알이 다른 박자로 깜빡이고, 별과 루돌프 코가
+     * 숨 쉬듯 밝아졌다 어두워진다. 산타와 루돌프는 가만히 선 채
+     * 아주 조금 들썩인다 — 완전히 멎어 있으면 인형처럼 보인다. */
+    if (api.xmasBulbs) {
+      api.xmasBulbs.material.opacity = 0.62 + Math.sin(t * 2.1) * 0.16 + Math.sin(t * 5.7) * 0.1;
+    }
+    if (api.xmasStar) {
+      api.xmasStar.material.emissiveIntensity = 0.9 + Math.sin(t * 1.7) * 0.35;
+      api.xmasStar.rotation.y = t * 0.35;
+    }
+    if (api.deerNose) {
+      api.deerNose.material.emissiveIntensity = 1.15 + Math.sin(t * 2.6) * 0.45;
+    }
+    /* 산타와 루돌프의 몸놀림은 game.js 가 맡는다. 자리·방향·걸음이 한곳에서
+     * 나와야 하는데, 여기서도 같은 값을 건드리면 둘이 싸운다. */
 
     // 네온 간판 — 진짜 네온관처럼 미세하게 흔들린다
     if (api.neonLight) {

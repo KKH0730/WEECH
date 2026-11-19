@@ -10,9 +10,53 @@
   --faint:rgba(240,236,230,.3);
   --accent:#ffb84d;
   --accent-ink:#2b1d05;
-  --glass:rgba(22,20,28,.82);
-  --line:rgba(240,236,230,.14);
+  --line:rgba(240,236,230,.22);
   --danger:#ff7a6b;
+
+  /* ── 액체 유리 ────────────────────────────────────────────────
+   *  진짜 유리처럼 보이려면 세 가지가 같이 있어야 한다.
+   *    1. 뒤가 비친다      backdrop-filter 로 흐리고, 채도를 올린다
+   *    2. 두께가 있다      안쪽 테두리 — 윗면은 밝고 아랫면은 되비친다
+   *    3. 떠 있다          바깥 그림자
+   *  흐리기만 하면 그냥 반투명 판이고, 테두리만 있으면 플라스틱이다.
+   *
+   *  채도를 올리는 게 핵심이다 — 유리 너머 색이 오히려 짙어 보이는
+   *  현상이라, 이게 빠지면 뿌옇기만 하고 유리 같지 않다.
+   * ------------------------------------------------------------ */
+  --glass-tint:rgba(24,21,30,.46);
+  --glass-sheen:linear-gradient(
+      170deg,
+      rgba(255,255,255,.17) 0%,
+      rgba(255,255,255,.04) 38%,
+      rgba(255,255,255,.015) 62%,
+      rgba(255,255,255,.09) 100%);
+  --glass:var(--glass-sheen), var(--glass-tint);
+  --glass-blur:blur(20px) saturate(185%);
+  /* 유리 두께 — 빛이 위에서 든다고 보고 위·왼쪽을 밝게 */
+  --glass-ring:
+      inset 0 1px 0 rgba(255,255,255,.42),
+      inset 1px 0 0 rgba(255,255,255,.14),
+      inset 0 -1px 0 rgba(255,255,255,.10),
+      inset 0 0 0 1px rgba(255,255,255,.06),
+      inset 0 16px 26px -18px rgba(255,255,255,.4);
+  --glass-drop:0 10px 30px rgba(0,0,0,.38), 0 2px 6px rgba(0,0,0,.22);
+  /* 손이 닿은 유리 — 한 꺼풀 더 밝아진다 */
+  --glass-hover:linear-gradient(
+      170deg,
+      rgba(255,255,255,.26) 0%,
+      rgba(255,255,255,.08) 40%,
+      rgba(255,255,255,.14) 100%), rgba(40,34,46,.5);
+  /* 켜진 것 — 호박빛이 유리 안에 번진다 */
+  --glass-on:linear-gradient(
+      170deg,
+      rgba(255,214,140,.5) 0%,
+      rgba(255,184,77,.26) 42%,
+      rgba(255,184,77,.36) 100%), rgba(92,58,12,.4);
+  --glass-on-ring:
+      inset 0 1px 0 rgba(255,236,196,.6),
+      inset 0 0 0 1px rgba(255,184,77,.35),
+      inset 0 16px 26px -18px rgba(255,236,196,.5);
+  --glass-ease:cubic-bezier(.22,1.1,.36,1);
 
   /* ── 반응형 기준 — 이 넷만 바꾸면 상단 UI 전체가 같이 움직인다 ──
    *  상단 컨트롤러는 제 글자크기로 비율이 정해지므로, 그 글자크기를
@@ -869,6 +913,93 @@ body.cinema #playerbar:hover{opacity:1;}
 }
 #topDock > *{pointer-events:auto;}
 
+/* ───────────── 산타·루돌프에게 말 걸기 ─────────────
+   왼쪽 아래. 채팅(가운데 아래)과 재생목록(오른쪽)을 피한 자리다. */
+#npcTip{
+  position:absolute;left:clamp(10px,1.4vw,18px);bottom:clamp(96px,13vh,150px);z-index:29;
+  display:flex;align-items:center;gap:0.5em;white-space:nowrap;
+  padding:0.5em 0.9em;border-radius:999px;cursor:pointer;
+  font-size:clamp(11px,1vw,13.5px);
+  animation:popIn .22s ease both;
+}
+#npcTip[hidden]{display:none;}
+#npcTipKey{
+  flex:none;min-width:1.7em;text-align:center;
+  padding:0.1em 0.4em;border-radius:0.4em;font-weight:700;font-size:0.92em;
+  background:rgba(255,255,255,.16);color:var(--accent);
+}
+
+/* 말풍선 — 화면 좌표로 NPC 머리 위에 따라붙는다.
+   left/top 은 game.js 가 매 프레임 넣는다. 자리를 못 잡으면(카메라 뒤 등)
+   .docked 로 왼쪽 아래에 내려앉는다. */
+#npcTalk{
+  position:absolute;z-index:31;left:50%;top:50%;
+  transform:translate(-50%,-100%);
+  width:clamp(230px,24vw,330px);max-width:calc(100vw - 24px);
+  display:flex;flex-direction:column;gap:0.5em;
+  padding:0.8em 0.9em 0.85em;border-radius:1em;
+  font-size:clamp(11.5px,1vw,13.5px);
+  animation:popIn .22s var(--glass-ease) both;
+}
+/* 꼬리 — 아래를 가리킨다. 가로로 밀려도 꼬리는 NPC 쪽에 남는다 */
+#npcTalk::after{
+  content:'';position:absolute;top:100%;left:var(--tail-x,50%);
+  margin-left:-0.5em;border:0.5em solid transparent;
+  border-top-color:rgba(255,255,255,.1);
+  filter:drop-shadow(0 3px 3px rgba(0,0,0,.3));
+}
+#npcTalk.docked{
+  left:clamp(10px,1.4vw,18px);top:auto;bottom:clamp(96px,13vh,150px);
+  transform:none;
+}
+#npcTalk.docked::after{display:none;}
+#npcTalk[hidden]{display:none;}
+.nt-head{display:flex;align-items:center;gap:0.5em;}
+.nt-ic{font-size:1.35em;line-height:1;}
+.nt-name{font-weight:700;color:var(--accent);letter-spacing:.02em;}
+.nt-x{
+  margin-left:auto;flex:none;width:1.7em;height:1.7em;border:0;border-radius:50%;
+  background:rgba(255,255,255,.1);color:var(--dim);cursor:pointer;font-size:0.9em;
+  display:flex;align-items:center;justify-content:center;
+}
+.nt-x:hover{background:rgba(255,122,107,.26);color:#ffb3a8;}
+/* 하는 말 — 한 줄씩 쌓인다 */
+.nt-say{
+  line-height:1.62;color:var(--ink);
+  max-height:9.5em;overflow-y:auto;overscroll-behavior:contain;
+  padding-right:2px;
+}
+.nt-say p{margin:0 0 0.28em;}
+.nt-say p:last-child{margin-bottom:0;}
+.nt-say p.me{color:var(--accent);font-weight:600;}
+/* 물어볼 것들 */
+/* 고를 것들 — 번호 붙은 목록. 숫자키로도 고른다 */
+.nt-list{
+  list-style:none;margin:0;padding:0.45em 0 0;
+  border-top:1px solid rgba(255,255,255,.1);
+  display:flex;flex-direction:column;gap:0.1em;
+}
+.nt-list button{
+  width:100%;display:flex;align-items:baseline;gap:0.55em;
+  border:0;border-radius:0.5em;cursor:pointer;text-align:left;
+  padding:0.42em 0.55em;font-family:inherit;font-size:1em;
+  background:none;color:var(--ink);line-height:1.4;
+  transition:background .14s var(--glass-ease), padding-left .14s var(--glass-ease);
+}
+.nt-list b{
+  flex:none;min-width:1.15em;text-align:right;
+  color:var(--accent);font-weight:700;font-variant-numeric:tabular-nums;
+}
+.nt-list button:hover{background:rgba(255,184,77,.16);padding-left:0.85em;}
+.nt-list button:active{background:rgba(255,184,77,.26);}
+.nt-list button.quiet{color:var(--dim);}
+.nt-list button.quiet b{color:var(--faint);}
+
+/* 폰에서는 왼쪽 아래에 조작 버튼이 있어 더 위로 올린다 */
+@media (hover: none) and (pointer: coarse){
+  #npcTip, #npcTalk{ bottom:clamp(150px,22vh,220px); }
+}
+
 /* 1인칭 배율 — 화면 오른쪽 한가운데. 휠을 굴리는 동안만 보인다 */
 #zoomPill{
   position:absolute;right:clamp(10px,1.6vw,20px);top:50%;transform:translateY(-50%);
@@ -1040,3 +1171,97 @@ body.cinema #topDock:hover{opacity:1;}
 #chatSend svg{margin-left:-1px;}   /* 종이비행기 모양이 오른쪽으로 쏠려 보여 보정 */
 #chatInput:focus{border-color:rgba(255,184,77,.5);background:rgba(255,255,255,.08);}
 #chatInput::placeholder{color:var(--faint);}
+
+
+/* ══════════════════════════════════════════════════════════════
+   액체 유리 — 떠 있는 면은 전부 같은 유리로 통일한다.
+
+   앞쪽에서 면마다 제각각 잡아 둔 그림자·흐리기를 여기서 덮어쓴다.
+   뒤에 두는 이유가 그것이다 — 같은 순위면 나중 것이 이긴다.
+   ══════════════════════════════════════════════════════════════ */
+#hostCtl, #barToggle, #chat, #chatToggle, #peopleList, #peopleToggle,
+#playerbar, #mediaCtl, #playlistPanel, #pmenu, #micMenu, #volPop,
+#viewDrop, #setDrop, #shareDrop, #modePill, #zoomPill, #toast,
+#npcTip, #npcTalk,
+.icon, .pill, .modal{
+  background:var(--glass);
+  backdrop-filter:var(--glass-blur);
+  -webkit-backdrop-filter:var(--glass-blur);
+  box-shadow:var(--glass-ring), var(--glass-drop);
+  border:0;
+  transition:background .22s var(--glass-ease),
+             box-shadow .22s var(--glass-ease),
+             transform .22s var(--glass-ease),
+             color .18s ease;
+}
+
+/* 눌리는 것들 — 손이 닿으면 한 꺼풀 밝아지고 살짝 떠오른다 */
+.icon:hover, .pill:hover, #barToggle:hover, #chatToggle:hover,
+#peopleToggle:hover{
+  background:var(--glass-hover);
+  box-shadow:var(--glass-ring), 0 14px 34px rgba(0,0,0,.42);
+  transform:translateY(-1px);
+}
+.icon:active, .pill:active, #barToggle:active, #chatToggle:active,
+#peopleToggle:active{
+  transform:translateY(0) scale(.97);
+  box-shadow:inset 0 2px 8px rgba(0,0,0,.3), inset 0 0 0 1px rgba(255,255,255,.08);
+}
+
+/* 켜진 것 — 색을 덮어 칠하지 않고 유리 안에 호박빛을 넣는다.
+   꽉 찬 주황으로 칠해 버리면 유리가 아니라 스티커가 된다. */
+.icon.on, .pill.on, #viewBtn.on, #viewBtn.open{
+  background:var(--glass-on);
+  box-shadow:var(--glass-on-ring), 0 10px 28px rgba(255,160,40,.18);
+  color:#ffe8c4;
+}
+.icon.leave:hover{
+  background:linear-gradient(170deg, rgba(255,160,146,.3), rgba(255,122,107,.14) 45%,
+             rgba(255,122,107,.2)), rgba(78,26,22,.45);
+  box-shadow:inset 0 1px 0 rgba(255,210,200,.5),
+             inset 0 0 0 1px rgba(255,122,107,.32),
+             0 12px 30px rgba(0,0,0,.4);
+  color:#ffd5cd;
+}
+
+/* 유리 위에 또 유리를 얹으면 탁해진다 — 안쪽 것은 흐리기를 끄고
+   얇은 막만 남긴다. */
+#mediaCtl, #pmenu .pm-item, #viewDrop button, #setDrop button, .pl-row{
+  backdrop-filter:none;-webkit-backdrop-filter:none;
+}
+#mediaCtl{
+  background:rgba(255,255,255,.06);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.14), inset 0 0 0 1px rgba(255,255,255,.05);
+}
+
+/* 도움말 — 뒤를 덮는 막은 유리가 아니라 그냥 안개다 */
+#helpModal{
+  background:rgba(10,8,14,.55);
+  backdrop-filter:blur(14px) saturate(140%);
+  -webkit-backdrop-filter:blur(14px) saturate(140%);
+}
+
+/* 글자가 유리에 묻히지 않게 — 아주 옅은 그림자 한 겹 */
+#hostCtl, #chat, #peopleList, #modePill, #zoomPill, #toast, .icon, .pill{
+  text-shadow:0 1px 2px rgba(0,0,0,.35);
+}
+
+/* 뒤가 안 비치는 브라우저 — 유리 대신 짙은 판으로 물러난다.
+   흐리기 없이 반투명하게 두면 글자가 안 읽힌다. */
+@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){
+  #hostCtl, #barToggle, #chat, #chatToggle, #peopleList, #peopleToggle,
+  #playerbar, #playlistPanel, #pmenu, #micMenu, #volPop,
+  #viewDrop, #setDrop, #shareDrop, #modePill, #zoomPill, #toast,
+  .icon, .pill, .modal{ background:rgba(20,17,26,.93); }
+}
+
+/* 움직임을 줄여 달라고 한 사람에게는 떠오르지 않는다 */
+@media (prefers-reduced-motion: reduce){
+  .icon:hover, .pill:hover, #barToggle:hover, #chatToggle:hover,
+  #peopleToggle:hover{ transform:none; }
+}
+
+/* 글이 많은 창은 유리를 더 두껍게 — 얇으면 뒤 글자가 비쳐 읽기 힘들다 */
+.modal, #playlistPanel, #helpModal .modal{
+  background:var(--glass-sheen), rgba(20,17,26,.78);
+}

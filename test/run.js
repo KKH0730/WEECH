@@ -19,6 +19,8 @@ const PORT = Number(process.env.PORT) || 3000;
 const SUITES = [
   { file: 'pitch_test.mjs', name: '음정 감지', needsServer: false },
   { file: 'room3d_test.js', name: '3D 공간 · 좌석 · 통행', needsServer: false },
+  // public/*.js 는 확장자가 .js 인데 모듈이라 Node 가 한 번 투덜댄다 — 조용히 시킨다
+  { file: 'client_test.mjs', name: '브라우저 모듈 적재 · 방 짓기', needsServer: false, quiet: true },
   { file: 'name_test.js', name: '이름 자동부여·바꾸기', needsServer: true },
   { file: 'room_test.js', name: 'Play 모드·마이크·권한', needsServer: true },
   { file: 'empty_test.js', name: '링크 없이 만든 빈 방', needsServer: true },
@@ -42,10 +44,11 @@ async function waitUp(tries) {
   return false;
 }
 
-function run(file) {
+function run(file, quiet) {
   return new Promise((res) => {
     const ps = spawn(process.execPath, [path.join(__dirname, file)], {
-      cwd: ROOT, stdio: 'inherit'
+      cwd: ROOT, stdio: 'inherit',
+      env: quiet ? Object.assign({}, process.env, { NODE_NO_WARNINGS: '1' }) : process.env
     });
     ps.on('close', (code) => res(code === 0));
     ps.on('error', () => res(false));
@@ -76,7 +79,7 @@ function run(file) {
   const results = [];
   for (const s of picked) {
     console.log('\n──────── ' + s.name + '  (' + s.file + ') ────────');
-    const ok = await run(s.file);
+    const ok = await run(s.file, s.quiet);
     results.push({ name: s.name, ok: ok, net: !!s.needsNet });
   }
 
