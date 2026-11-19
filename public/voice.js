@@ -23,8 +23,23 @@ const MIC_KEY = 'weech.mic';
 let micDevice = '';
 try { micDevice = localStorage.getItem(MIC_KEY) || ''; } catch (e) { /* 사생활 모드 등 */ }
 
+/* 소리를 다듬을 것인가, 빨리 보낼 것인가.
+ *  에코 제거·잡음 제거·자동 음량은 말소리에는 좋지만 셋 다 소리를 모아 두고
+ *  일한다 — 그만큼 늦는다. 게다가 잡음 제거는 길게 끄는 음을 잡음으로 보고
+ *  깎아내고, 자동 음량은 지른 부분을 눌러 버린다. 노래에는 둘 다 독이다.
+ *  헤드셋을 꼈다면 에코가 돌 일이 없으므로 전부 끄는 쪽이 낫다.
+ *  스피커로 듣는 사람은 꺼 두면 소리가 되돌아 울므로 켠 채로 둔다. */
+const LOW_KEY = 'weech.lowlat';
+let lowLat = true;
+try { const v = localStorage.getItem(LOW_KEY); if (v !== null) lowLat = (v === '1'); } catch (e) { /* 사생활 모드 등 */ }
+
+export const lowLatency = () => lowLat;
+
 function micConstraints(dev) {
-  const a = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+  const a = lowLat
+    ? { echoCancellation: false, noiseSuppression: false, autoGainControl: false,
+        channelCount: 1, latency: 0 }
+    : { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
   if (dev) a.deviceId = { exact: dev };
   return { audio: a, video: false };
 }
@@ -39,6 +54,50 @@ function openMic() {
     }
     throw e;
   });
+}
+
+/* ---- 받는 쪽 버퍼 ---------------------------------------------------
+ *  브라우저는 받은 소리를 바로 내보내지 않고 조금 쌓아 둔다(지터 버퍼).
+ *  망이 들쭉날쭉해도 끊기지 않게 하려는 것인데, 기본값은 말을 주고받는 데
+ *  맞춰져 있어 100ms 를 훌쩍 넘기곤 한다. 노래는 박자가 어긋나면 못 쓰므로
+ *  '되도록 쌓지 말라' 고 일러둔다 — 어디까지나 바람이라, 망이 나빠지면
+ *  브라우저가 알아서 다시 늘린다. */
+function tuneReceiver(r) {
+  if (!r) return;
+  try { r.jitterBufferTarget = 0; } catch (e) { /* 모르는 브라우저 */ }
+  try { r.playoutDelayHint = 0; } catch (e) { /* 옛 크롬 */ }
+}
+
+/* ---- 보내는 쪽 묶음 -------------------------------------------------
+ *  Opus 는 기본으로 20ms 씩 모아 한 덩이로 보낸다. 10ms 로 줄이면 그만큼
+ *  먼저 출발한다. DTX(조용하면 안 보내기)는 노래의 첫 음을 갉아먹으므로 끈다.
+ *  FEC 는 켜 둔다 — 버퍼를 줄인 만큼 한 덩이 잃는 게 더 아프다. */
+const OPUS_WANT = ['minptime=10', 'useinbandfec=1', 'usedtx=0', 'stereo=0', 'sprop-stereo=0'];
+
+function tuneSdp(sdp) {
+  const pt = (sdp.match(/a=rtpmap:(\d+)\s+opus\/48000/i) || [])[1];
+  if (!pt) return sdp;
+  const drop = /^\s*(minptime|useinbandfec|usedtx|stereo|sprop-stereo)\s*=/;
+  let hit = false;
+  let out = sdp.replace(new RegExp('a=fmtp:' + pt + ' ([^\\r\\n]*)'), (m, params) => {
+    hit = true;
+    const keep = params.split(';').filter((x) => x && !drop.test(x));
+    return 'a=fmtp:' + pt + ' ' + keep.concat(OPUS_WANT).join(';');
+  });
+  if (!hit) return sdp;                     // 모양이 낯설다 — 손대지 않는다
+  if (!/^a=ptime:/m.test(out)) {
+    out = out.replace(/(a=rtpmap:\d+\s+opus\/48000[^\r\n]*\r?\n)/i, '$1a=ptime:10\r\n');
+  }
+  return out;
+}
+
+/* 고친 SDP 가 거부되면 원본 그대로 쓴다 — 지연을 줄이려다 연결을 깨뜨리지 않는다 */
+function setLocal(pc, desc) {
+  let sdp;
+  try { sdp = tuneSdp(desc.sdp); } catch (e) { sdp = desc.sdp; }
+  if (sdp === desc.sdp) return pc.setLocalDescription(desc);
+  return pc.setLocalDescription({ type: desc.type, sdp: sdp })
+    .catch(() => pc.setLocalDescription(desc));
 }
 
 let myId = 0;
@@ -154,6 +213,7 @@ function makePeer(id, sid) {
     if (e.candidate && peers.get(id) === p) sendSignal(id, { sid: p.sid, ice: e.candidate.toJSON() });
   };
   pc.ontrack = (e) => {
+    tuneReceiver(e.receiver);
     const stream = e.streams[0] || new MediaStream([e.track]);
     attachAudio(id, stream);
   };
@@ -201,7 +261,7 @@ function connect(id) {
   p.sender = tr.sender;
   if (myTrack()) p.sender.replaceTrack(myTrack());
   p.pc.createOffer()
-    .then((o) => p.pc.setLocalDescription(o))
+    .then((o) => setLocal(p.pc, o))
     .then(() => { if (peers.get(id) === p) sendSignal(id, { sid: p.sid, sdp: p.pc.localDescription }); })
     .catch(() => { if (peers.get(id) === p) dropPeer(id); });
 }
@@ -245,12 +305,13 @@ export function signal(from, data) {
           if (tr) {
             // 받는 쪽 자리는 기본이 'recvonly' 라 그대로 두면 이쪽 목소리가 영영 안 간다
             tr.direction = 'sendrecv';
+            tuneReceiver(tr.receiver);
             p.sender = tr.sender;
             if (myTrack()) p.sender.replaceTrack(myTrack());
           }
           return p.pc.createAnswer();
         })
-        .then((a) => p.pc.setLocalDescription(a))
+        .then((a) => setLocal(p.pc, a))
         .then(() => { if (peers.get(from) === cur) sendSignal(from, { sid: cur.sid, sdp: cur.pc.localDescription }); })
         .catch(() => { if (peers.get(from) === cur) dropPeer(from); });
     } else if (desc.type === 'answer' && p && p.sid === data.sid) {
@@ -437,6 +498,53 @@ export function currentMic() {
 
 /* 마이크를 바꾼다. 켜져 있으면 그 자리에서 갈아 끼운다(상대와 다시 협상하지 않는다).
  * 새 스트림을 돌려준다 — 음정 분석기도 갈아 물려야 하므로. 꺼져 있으면 null. */
+/* 켜져 있는 마이크를 새 조건으로 다시 연다 (꺼져 있으면 할 일이 없다) */
+function reopenMic() {
+  if (!micStream) return Promise.resolve(null);
+  return openMic().then((s) => {
+    if (!micStream || !micWanted) { s.getTracks().forEach((t) => t.stop()); return null; }
+    const old = micStream;
+    micStream = s;
+    pushTrack();
+    old.getTracks().forEach((t) => { try { t.stop(); } catch (e) { /* 무시 */ } });
+    return s;
+  }, () => null);
+}
+
+/* 낮은 지연을 켜고 끈다 — 마이크가 켜져 있으면 바로 새 조건으로 다시 연다 */
+export function setLowLatency(on) {
+  lowLat = !!on;
+  try { localStorage.setItem(LOW_KEY, lowLat ? '1' : '0'); } catch (e) { /* 무시 */ }
+  return reopenMic();
+}
+
+/* ---- 얼마나 늦나 ----------------------------------------------------
+ *  브라우저가 세어 둔 값을 그대로 읽는다. 짐작이 아니라 잰 값이다.
+ *    buf : 쌓아 둔 소리가 실제로 기다린 평균 시간
+ *    net : 왕복 시간의 절반 (한쪽 방향)
+ *  마이크·스피커 장치가 먹는 시간은 여기 안 잡힌다 — 그래서 '적어도 이만큼'
+ *  으로 읽어야 한다. */
+export function latency() {
+  const jobs = [];
+  peers.forEach((p, id) => {
+    if (!p.pc || blocked.has(id)) return;
+    jobs.push(p.pc.getStats().then((st) => {
+      let buf = -1, rtt = -1;
+      st.forEach((r) => {
+        if (r.type === 'inbound-rtp' && r.kind === 'audio' && r.jitterBufferEmittedCount > 0) {
+          buf = (r.jitterBufferDelay / r.jitterBufferEmittedCount) * 1000;
+        } else if (r.type === 'candidate-pair' && r.nominated && r.currentRoundTripTime >= 0) {
+          rtt = r.currentRoundTripTime * 1000;
+        } else if (r.type === 'remote-inbound-rtp' && rtt < 0 && r.roundTripTime >= 0) {
+          rtt = r.roundTripTime * 1000;
+        }
+      });
+      return { id: id, buf: buf, net: rtt >= 0 ? rtt / 2 : -1 };
+    }, () => null));
+  });
+  return Promise.all(jobs).then((rows) => rows.filter((r) => r && r.buf >= 0));
+}
+
 export function setMicDevice(id) {
   micDevice = id || '';
   try { if (micDevice) localStorage.setItem(MIC_KEY, micDevice); else localStorage.removeItem(MIC_KEY); } catch (e) { /* 무시 */ }

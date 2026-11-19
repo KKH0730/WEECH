@@ -915,6 +915,15 @@ body.cinema #playerbar:hover{opacity:1;}
 .mm-track{flex:1;height:6px;border-radius:3px;background:rgba(255,255,255,.1);overflow:hidden;}
 #micMeterFill{height:100%;width:0;background:#ff5ab0;border-radius:3px;transition:width .08s linear;}
 .mm-hint{font-size:11px;color:var(--dim);line-height:1.45;}
+/* 낮은 지연 켜고 끄기 + 실제로 얼마나 늦는지 */
+.mm-low{display:flex;align-items:center;gap:7px;cursor:pointer;
+  padding-top:8px;border-top:1px solid var(--line);font-size:12px;}
+.mm-low input{flex:none;width:14px;height:14px;accent-color:var(--accent);cursor:pointer;margin:0;}
+.mm-lowt em{font-style:normal;color:var(--dim);font-size:10px;margin-left:3px;}
+.mm-lat{font-size:11px;color:var(--dim);font-variant-numeric:tabular-nums;}
+.mm-lat[hidden]{display:none;}
+.mm-lat b{color:var(--ink);font-weight:700;}
+.mm-lat.warn b{color:var(--danger);}
 /* 모드 알림이 떠 있는 동안 토스트를 그 아래로 민다 */
 body.modeshow #toast{top:calc(var(--ctl-full) + 56px);}
 /* 컨트롤러를 접으면 탭만 남으므로 아래 것들도 따라 올라간다 */

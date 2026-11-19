@@ -752,6 +752,7 @@ function renderMicList() {
   const mb = $('mmMute');
   mb.textContent = micOn ? '음소거' : '음소거 풀기';
   mb.classList.toggle('on', !micOn);
+  $('mmLow').checked = Voice.lowLatency();
   $('mmState').textContent = micOn ? '마이크 켜짐' : '음소거 중';
   $('micMenu').classList.toggle('muted', !micOn);
 }
@@ -762,15 +763,55 @@ function tickMicMeter() {
   micMenuRaf = requestAnimationFrame(tickMicMeter);
 }
 
+/* ---- 얼마나 늦나 ----------------------------------------------------
+ *  브라우저가 센 값만 보여 준다. 마이크·스피커 장치가 먹는 시간은 여기
+ *  안 잡히므로 '적어도 이만큼' 이다. 초마다 한 번이면 충분하다. */
+let latTimer = 0;
+
+function tickLatency() {
+  const el = $('mmLat');
+  if (!el || !micMenuOpen()) { clearInterval(latTimer); latTimer = 0; return; }
+  Voice.latency().then((rows) => {
+    if (!micMenuOpen()) return;
+    if (!rows.length) {
+      el.hidden = true;
+      return;
+    }
+    // 여럿이면 가장 늦는 사람이 기준이다 — 제일 답답한 쪽이 체감이다
+    let worst = 0, net = 0;
+    for (const r of rows) {
+      const t = r.buf + (r.net > 0 ? r.net : 0);
+      if (t > worst) { worst = t; net = r.net; }
+    }
+    el.hidden = false;
+    el.classList.toggle('warn', worst > 150);
+    el.innerHTML = '지연 <b>' + Math.round(worst) + 'ms</b> ' +
+      '<span>(버퍼 ' + Math.round(worst - (net > 0 ? net : 0)) + ' · 망 ' +
+      (net > 0 ? Math.round(net) : '?') + ')</span>';
+  }, () => { /* 통계를 못 읽는 브라우저 */ });
+}
+
+$('mmLow').addEventListener('change', (e) => {
+  const on = e.target.checked;
+  Voice.setLowLatency(on).then((s) => {
+    if (s) { pitchReset(); Pitch.start(s); }       // 새 스트림이라 음정 분석기도 다시 물린다
+    renderMicList();
+  });
+  toast(on
+    ? '낮은 지연 — 에코·잡음 제거를 끕니다. 스피커로 들으면 소리가 되울릴 수 있습니다.'
+    : '에코·잡음 제거를 켭니다. 스피커로 들을 때 알맞지만 조금 늦습니다.', 4200);
+});
+
 /* 참여자 목록의 내 마이크 아래에 띄운다. 목록이 스크롤 상자라 메뉴는 바깥(fixed)에 있다 */
 function setMicMenu(open, anchor) {
   const menu = $('micMenu');
   menu.hidden = !open;
   const mine = $('peopleList').querySelector('button.mysel');
   if (mine) mine.classList.toggle('open', open);
-  if (!open) return;
+  if (!open) { clearInterval(latTimer); latTimer = 0; return; }
   renderMicList();
   if (!micMenuRaf) micMenuRaf = requestAnimationFrame(tickMicMeter);
+  if (!latTimer) { tickLatency(); latTimer = setInterval(tickLatency, 1000); }
   const a = anchor || mine;
   if (!a) return;
   const r = a.getBoundingClientRect();
