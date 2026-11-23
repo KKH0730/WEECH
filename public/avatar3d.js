@@ -79,7 +79,7 @@ function faceTexture(eyeKind, shut, hairHex) {
   const c = document.createElement('canvas');
   c.width = c.height = S;
   const g = c.getContext('2d');
-  const kind = Math.abs(eyeKind | 0) % 5;
+  const kind = Math.abs(eyeKind | 0) % 6;    // 눈매 수 — PARTS.eyes 와 같아야 한다
 
   const chan = (v, i) => (v >> (16 - 8 * i)) & 255;
   const rgb = (r, gg, b) => (r << 16) | (gg << 8) | b;
@@ -106,17 +106,20 @@ function faceTexture(eyeKind, shut, hairHex) {
    * 한동안 IRIS 를 적어 두고도 세 겹을 전부 같은 남색으로 칠하고
    * 있었다. 눈이 통째로 까만 덩어리가 되어, 눈매를 다섯으로 나눠
    * 두고도 다 똑같아 보였다. */
-  const IRIS = [0x3f8f92, 0x4a86d8, 0x8a6a3f, 0x5aa36b, 0x6b5ad0];
-  /* 눈매 다섯 — 속눈썹 가닥 수와 눈꼬리 각도만 다르다 */
+  const IRIS = [0x3f8f92, 0x4a86d8, 0x8a6a3f, 0x5aa36b, 0x6b5ad0, 0x3f8f92];
+  /* 눈매 여섯 — 속눈썹 가닥 수와 눈꼬리 각도만 다르다.
+   * 5번은 고양이 눈매 — 양끝이 뾰족한 아몬드꼴, 앞트임, 치켜 올라간 꼬리 */
   const EYE = [
     { lash: 1, tilt: 0.00 },
     { lash: 2, tilt: 0.10 },
     { lash: 1, tilt: -0.08 },
     { lash: 2, tilt: 0.04 },
-    { lash: 1, tilt: 0.14 }
+    { lash: 1, tilt: 0.14 },
+    { lash: 1, tilt: 0.24 }
   ];
   const E = EYE[kind];
   const iris = IRIS[kind];
+  const CAT = kind === 5;
   /* 선은 검정이 아니라 짙은 밤색이고, 머리색을 조금 따라간다 —
    * 머리가 밝은데 눈만 새까맣면 눈이 얼굴에서 떠 보인다. */
   const LINE = css(mix(shade(hairHex, -0.5), 0x4a3028, 0.55));
@@ -188,6 +191,60 @@ function faceTexture(eyeKind, shut, hairHex) {
       g.quadraticCurveTo(x, EY + ry * 0.6, x + rx * 0.9, EY - ry * 0.16);
       g.stroke();
       lashes();
+      continue;
+    }
+
+    if (CAT) {
+      /* 고양이 눈매 — 동그라미가 아니라 양끝이 뾰족한 아몬드다.
+       * 안쪽 끝은 코를 향해 째지고(앞트임), 바깥 끝은 아이라인
+       * 날개처럼 치켜 올라간다. 눈동자는 보통 눈과 똑같다 — 세로
+       * 동공을 넣었더니 '고양이 눈매' 가 아니라 '고양이 눈깔' 이
+       * 됐다. 납작한 꼴이라 눈동자가 위아래로 삐져나오므로 눈
+       * 모양으로 오려(clip) 그린다. */
+      /* 커도 고양이는 고양이다 — 납작한 비율(세로 0.72)만 지키면 된다 */
+      const rxC = rx * 1.26, ryC = ry * 0.72;
+      const xin = x - out * rxC * 1.18, yin = EY + ryC * 0.2;
+      const xout = x + out * rxC * 1.1, yout = EY - ryC * 0.6;
+      const path = () => {
+        g.beginPath();
+        g.moveTo(xin, yin);
+        g.quadraticCurveTo(x - out * rxC * 0.05, EY - ryC * 1.8, xout, yout);
+        g.quadraticCurveTo(x + out * rxC * 0.1, EY + ryC * 1.65, xin, yin);
+        g.closePath();
+      };
+      g.fillStyle = '#ffffff';
+      path(); g.fill();
+      g.save();
+      path(); g.clip();
+      const cy = EY + ryC * 0.12;
+      const grd = g.createLinearGradient(x, cy - IR, x, cy + IR);
+      grd.addColorStop(0, css(shade(iris, -0.18)));
+      grd.addColorStop(0.55, css(iris));
+      grd.addColorStop(1, css(shade(iris, 0.34)));
+      g.fillStyle = grd;
+      g.beginPath(); g.arc(x, cy, IR * 1.04, 0, 6.2832); g.fill();
+      g.fillStyle = css(shade(iris, -0.5));
+      g.beginPath(); g.arc(x, cy + IR * 0.04, IR * 0.45, 0, 6.2832); g.fill();
+      g.fillStyle = '#ffffff';
+      g.beginPath(); g.ellipse(x - IR * 0.36, cy - IR * 0.32, IR * 0.3, IR * 0.23, -0.45, 0, 6.2832); g.fill();
+      g.fillStyle = 'rgba(255,255,255,.75)';
+      g.beginPath(); g.arc(x + IR * 0.36, cy + IR * 0.3, IR * 0.11, 0, 6.2832); g.fill();
+      g.restore();
+      //  테두리 — 아래는 가늘게 한 바퀴, 위는 아이라인처럼 굵게
+      g.strokeStyle = LINE;
+      g.lineWidth = S * 0.013;
+      path(); g.stroke();
+      g.lineWidth = S * 0.02;
+      g.beginPath();
+      g.moveTo(xin, yin);
+      g.quadraticCurveTo(x - out * rxC * 0.05, EY - ryC * 1.8, xout, yout);
+      g.stroke();
+      //  속눈썹 — 치켜 올라간 바깥 끝에서 그대로 이어지는 한 가닥
+      g.lineWidth = S * 0.016;
+      g.beginPath();
+      g.moveTo(xout, yout);
+      g.quadraticCurveTo(xout + out * S * 0.018, yout - S * 0.02, xout + out * S * 0.03, yout - S * 0.036);
+      g.stroke();
       continue;
     }
 
@@ -273,11 +330,13 @@ function faceTexture(eyeKind, shut, hairHex) {
  *  것처럼 보인다. 한쪽만 고치지 말 것. */
 function headProf(th) {
   const t = th / Math.PI;
-  const cheek = 1 + 0.11 * Math.exp(-(((t - 0.62) / 0.23) ** 2));
-  /* 턱 — 둥근 맛과 각진 맛의 중간. 좁힘을 늦게(0.80) 시작하고 조금만
-   * (0.09) 줄이면 턱선이 아래까지 넓게 남아 각져 보이면서도 곡선은
-   * 산다. 일찍(0.74)·많이(0.13) 깎으면 갸름한 달걀턱이 된다. */
-  const chin = 1 - 0.09 * Math.max(0, (t - 0.80) / 0.20) ** 1.25;
+  /* 볼 — 눈 아래가 가장 볼록하되 '살짝' 만. 0.11로 부풀렸더니 라면
+   * 먹고 부은 얼굴이 됐다. 통통함은 6%면 충분하다. */
+  const cheek = 1 + 0.06 * Math.exp(-(((t - 0.62) / 0.23) ** 2));
+  /* 턱 — 둥근 맛과 각진 맛의 중간. 좁힘을 늦게(0.78) 시작하되 조금
+   * 더(0.11) 들어가야 볼과 턱이 갈린다. 일찍(0.74)·많이(0.13) 깎으면
+   * 갸름한 달걀턱이 된다. */
+  const chin = 1 - 0.11 * Math.max(0, (t - 0.78) / 0.22) ** 1.25;
   return cheek * chin;
 }
 
@@ -389,10 +448,17 @@ function hairMass(rIn, rOut, base, front, back) {
  *  옆과 뒤로 갈수록 길어져 얼굴을 감싸는 모양이 된다.
  *  겉면·속면·밑단을 모두 짜서 두께를 준다.
  * ------------------------------------------------------------------ */
-function longHair(rIn, rOut, len, capMul) {
+function longHair(rIn, rOut, len, capMul, rampW, hemY) {
   /* capMul — 머리선(두피를 덮는 한계각)을 줄인다. 1이면 눈썹까지
-   * 내려오는 앞머리, 0.8이면 이마가 드러나는 짧은 머리선이다. */
+   * 내려오는 앞머리, 0.8이면 이마가 드러나는 짧은 머리선이다.
+   * rampW — 커튼이 얼굴 앞에서 제 길이가 되기까지의 구간. 기본 0.42는
+   * 긴 생머리용이다(옆 갈래가 그 빈자리를 채운다).
+   * hemY — 주면 밑단을 '한 높이' 로 자른다(머리 로컬 y). 두피 가장자리는
+   * 뒤가 낮고 앞이 높아서, 상대 길이(len)로 늘어뜨리면 밑단이 그 높이차를
+   * 그대로 물려받아 들쭉날쭉해진다 — 단발은 둘레가 같은 높이로 떨어져야
+   * 단발이지, 아니면 바가지다. */
   const CM = capMul || 1;
+  const RW = rampW || 0.42;
   /* 면 수를 아주 많이 둘 이유가 없다 — 매 프레임 꼭짓점을 흔들어야 하므로
    * 사람 수(최대 스무 명)를 곱한 만큼 계산이 된다. */
   const NP = 56, NU = 20;
@@ -410,10 +476,22 @@ function longHair(rIn, rOut, len, capMul) {
   const dropAt = (phi) => {
     const f = Math.cos(phi);                 // 1 앞, -1 뒤
     const back = (1 - f) / 2;                // 0 앞, 1 뒤
+    if (hemY !== undefined) {
+      /* 얼굴 틈만 비우고, 어디서 내려오든 밑단은 hemY 에 맞춘다.
+       * 틈은 얼굴판(FACE_PHI, ±40°) 가장자리까지 — 좁히면 커튼이 볼과
+       * 볼터치를 덮어 커튼 사이로 내다보는 꼴이 된다.
+       * 경계는 거의 수직으로 뚝 — 넓게(0.06) 뭉개면 눈꼬리와 귀 사이에
+       * 반 토막 머리카락이 걸려 관자놀이가 맨살로 보인다. */
+      const o = Math.min(1, Math.max(0, (back - 0.105) / 0.02));
+      const e = o * o * (3 - 2 * o);
+      const th = capAt(phi);
+      const capY = Math.cos(th) * rOut * headProf(th) * HEAD_SY;
+      return Math.max(0, capY - hemY) * e;
+    }
     /* 얼굴 앞만 짧고, 귀 옆부터 뒤까지는 고르게 길다.
      * 지수로만 깎으면 뒤 한가운데만 뾰족하게 길어져 날개처럼 보인다.
-     * 0~0.42 구간에서 빠르게 올라가고 그 뒤로는 평평하게 둔다. */
-    const t = Math.min(1, back / 0.42);
+     * 0~RW 구간에서 빠르게 올라가고 그 뒤로는 평평하게 둔다. */
+    const t = Math.min(1, back / RW);
     return len * (t * t * (3 - 2 * t));
   };
 
@@ -441,9 +519,18 @@ function longHair(rIn, rOut, len, capMul) {
           const sz = Math.sin(tMax) * Math.cos(phi);
           /* 아래로 갈수록 몸 쪽으로 모이되, 끝이 뾰족해지지 않게
            * 조금만. 많이 모으면 볼이 가장 넓은 높이에서 옆머리보다
-           * 안쪽으로 들어와 볼이 머리카락을 뚫는다. */
+           * 안쪽으로 들어와 볼이 머리카락을 뚫는다.
+           * 밑단을 맞추는 단발(hemY)은 세 토막이다 — 내려가며 벌어져서
+           * 뺨과 귀를 덮고(얇은 머리는 그대로 떨어뜨리면 통째로 뚫고
+           * 나온다), 귀 밑부터는 안쪽으로 감긴다(C컬). 끝까지 직선으로
+           * 떨어뜨리면 클레오파트라 투구가 된다. */
           const rr = r * headProf(tMax);
-          const taper = 1 - 0.06 * v;
+          let taper;
+          if (hemY !== undefined) {
+            const bell = 0.10 * Math.min(1, v * 2.5);          // 뺨·귀 덮기
+            const roll = Math.max(0, (v - 0.62) / 0.38);       // 귀 밑부터
+            taper = 1 + bell - 0.17 * roll * roll;             // 끝은 턱 쪽으로
+          } else taper = 1 - 0.06 * v;
           x = sx * rr * HEAD_SX * taper;
           y = sy * rr * HEAD_SY - drop * v;
           z = sz * rr * HEAD_SZ * taper;
@@ -677,6 +764,61 @@ function clothTexture(style, colorHex) {
     for (let i = 0; i < 5; i++) {
       g.beginPath(); g.arc(tx(0), ty(0.08 + i * 0.21), S * 0.013, 0, 6.2832); g.fill();
     }
+  } else if (style === 6) {
+    /* 고양이 티 — 가슴 한가운데 고양이 얼굴, 허리께 양옆에 발자국.
+     * 얼굴은 선으로만 그린다 — 칠해 넣으면 멀리서 얼룩이 된다. */
+    const ink = '#4a3a30';
+    const cx = tx(0), cyf = ty(0.42), r = S * 0.1;
+    g.strokeStyle = ink;
+    g.lineWidth = S * 0.014;
+    //  얼굴 — 아래가 통통한 원
+    g.beginPath(); g.ellipse(cx, cyf, r, r * 0.88, 0, 0, 6.2832); g.stroke();
+    //  귀 — 세모 둘
+    for (const sg of [-1, 1]) {
+      g.beginPath();
+      g.moveTo(cx + sg * r * 0.38, cyf - r * 0.76);
+      g.lineTo(cx + sg * r * 0.82, cyf - r * 1.28);
+      g.lineTo(cx + sg * r * 0.95, cyf - r * 0.5);
+      g.stroke();
+    }
+    //  자는 눈 · 분홍 코 · w 입
+    g.lineWidth = S * 0.012;
+    for (const sg of [-1, 1]) {
+      g.beginPath();
+      g.moveTo(cx + sg * r * 0.52, cyf - r * 0.12);
+      g.quadraticCurveTo(cx + sg * r * 0.32, cyf + r * 0.06, cx + sg * r * 0.12, cyf - r * 0.12);
+      g.stroke();
+    }
+    g.fillStyle = '#d98a7e';
+    g.beginPath();
+    g.moveTo(cx - r * 0.1, cyf + r * 0.2);
+    g.lineTo(cx + r * 0.1, cyf + r * 0.2);
+    g.lineTo(cx, cyf + r * 0.34);
+    g.closePath(); g.fill();
+    g.beginPath();
+    g.moveTo(cx - r * 0.22, cyf + r * 0.52);
+    g.quadraticCurveTo(cx - r * 0.11, cyf + r * 0.64, cx, cyf + r * 0.5);
+    g.quadraticCurveTo(cx + r * 0.11, cyf + r * 0.64, cx + r * 0.22, cyf + r * 0.52);
+    g.stroke();
+    //  수염 — 양옆 세 가닥
+    g.lineWidth = S * 0.009;
+    for (const sg of [-1, 1]) for (let k = -1; k <= 1; k++) {
+      g.beginPath();
+      g.moveTo(cx + sg * r * 1.06, cyf + k * r * 0.17);
+      g.lineTo(cx + sg * r * 1.5, cyf + k * r * 0.26);
+      g.stroke();
+    }
+    //  발자국 — 허리께 양옆
+    g.fillStyle = 'rgba(74,58,48,.55)';
+    for (const sg of [-1, 1]) {
+      const px = tx(sg * 0.6), py = ty(0.78), pr = S * 0.016;
+      g.beginPath(); g.ellipse(px, py + pr, pr * 1.3, pr, 0, 0, 6.2832); g.fill();
+      for (let k = 0; k < 3; k++) {
+        g.beginPath();
+        g.arc(px + (k - 1) * pr * 1.3, py - pr * 0.9 - (k === 1 ? pr * 0.4 : 0), pr * 0.55, 0, 6.2832);
+        g.fill();
+      }
+    }
   }
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
@@ -762,17 +904,17 @@ const FACE_TOP = Math.PI * 0.34;
  *  끝에 덧붙여야 한다.
  * ------------------------------------------------------------------ */
 export const PARTS = {
-  eyes: 5,                                     // faceTexture 의 눈매 가짓수
+  eyes: 6,                                     // faceTexture 의 눈매 가짓수 (5번 = 고양이 눈)
   hairs: ['긴 생머리', '단발', '올림머리', '포니테일', '양갈래', '짧은 머리', '더벅머리'],
-  topStyles: ['티셔츠', '맨투맨', '후드티', '청자켓', '블라우스', '민소매'],
+  topStyles: ['티셔츠', '맨투맨', '후드티', '청자켓', '블라우스', '민소매', '고양이 티'],
   bottomStyles: ['치마', '체크치마', '바지', '청바지', '반바지'],
   //  마지막 하나는 재색이었는데 쓰는 둘(구름·담이)이 다 할머니로 보였다 — 로즈로
   hairColors: [0x2b2a33, 0x4a3327, 0x8a5a2b, 0xb98a55, 0x6b4a6e, 0xc492a8],
   skins: [0xffd8a9, 0xffe6c8, 0xf0be8a, 0xd99e6a, 0xa9754c],
   /* 옷마다 제 색이 박혀 있다 — 청자켓은 청색이고 끝이다.
    * 순서는 topStyles / bottomStyles 와 한 몸이니 같이 움직일 것. */
-  tops: [0xff6b5c, 0x3b4a6b, 0x7fc8b8, 0x7191b8, 0xf2bcc8, 0xf2f2f2],
-  //      티셔츠      맨투맨      후드티(민트) 청자켓      블라우스    민소매
+  tops: [0xff6b5c, 0x3b4a6b, 0x7fc8b8, 0x7191b8, 0xf2bcc8, 0xf2f2f2, 0xf2e3c8],
+  //      티셔츠      맨투맨      후드티(민트) 청자켓      블라우스    민소매     고양이 티(크림)
   bottoms: [0xd98a9e, 0x8a7a68, 0xc9b48f, 0x46597e, 0x8fb8e0],
   //        치마       체크치마    바지(치노)  청바지      반바지(하늘)
   shoes: [0x4a4038, 0xf4f1ea, 0xc0392b, 0x3f8ecc, 0x6fbf8f, 0xe0a92c]
@@ -798,11 +940,11 @@ export const PARTS = {
  *  않는다. 작은 사진 아홉 장으로 고르는 자리라 비슷한 둘이 끼면
  *  고를 이유가 사라진다.
  * ------------------------------------------------------------------ */
-/*  hat   정수리에 얹는 것 — cap(야구모자) · beret(베레모) · straw(밀짚모자) · bow(리본) · band(머리띠)
+/*  hat   정수리에 얹는 것 — cap(야구모자) · beret(베레모) · straw(밀짚모자) · bow(리본) · band(머리띠) · cat(고양이 머리띠)
  *  specs 코에 걸치는 것 — round(둥근 테) · thick(뿔테) · shade(선글라스)
  *  묶음이 위로 솟는 머리(올림머리·포니테일)에는 모자를 씌우지 말 것 — 묶음을 뚫는다. */
 export const CHARACTERS = [
-  { name: '보리', look: [0, 1, 0, 0, 0, 1, 0, 0, 3], hat: ['cap', 0x31486e] },      // 단발 · 티셔츠 · 남색 캡
+  { name: '보리', look: [5, 1, 0, 0, 0, 1, 0, 6, 3], hat: ['cat', 0xe39a4a] },      // 고양이 눈 · 중단발 · 고양이 티 · 치즈냥이 머리띠
   { name: '하루', look: [1, 0, 1, 0, 0, 2, 1, 4, 0], hat: ['bow', 0xd04a4a] },      // 긴 생머리 · 블라우스 · 빨간 리본
   { name: '단추', look: [4, 2, 2, 0, 0, 4, 1, 2, 2], specs: ['round', 0x6e4a2f] },  // 남 · 맨번 · 민트 후드티 · 치노 · 둥근 안경
   { name: '노을', look: [3, 4, 0, 0, 0, 5, 4, 1, 0], hat: ['beret', 0xd9a441] },    // 양갈래 · 맨투맨 · 겨자 베레모
@@ -1099,17 +1241,22 @@ export function makeAvatar(opts) {
    *  묶는 머리(2~4)는 두피만 덮고 꼬리·묶음을 따로 단다 — 덮는 장을
    *  길게 두면 전부 같은 바가지로 보인다. */
   const hairStyle = look[1];
-  const hairLen = [0.44, 0.16, 0.03, 0.05, 0.08, 0, 0.06][hairStyle] || 0;
+  const hairLen = [0.44, 0.25, 0.03, 0.05, 0.08, 0, 0.06][hairStyle] || 0;
   /* 짧은 머리는 두께(1.19배 헬멧)가 아니라 두피에 붙어야 한다 —
-   * 두껍게 두면 그게 바로 밤톨머리다 */
+   * 두껍게 두면 그게 바로 밤톨머리다. 단발도 숱이 적어야 단정하다 —
+   * 1.19배로 두면 머리가 몸보다 큰 가발이 된다. */
   const TIGHT = hairStyle === 5;
+  const BOB = hairStyle === 1;
+  const hairR = HEAD_R * (TIGHT ? 1.07 : BOB ? 1.1 : 1.19);
   /* 끈 — 머리색을 눌러 어둡게. 머리색 그대로면 묶은 티가 안 난다 */
   const tieMat = flat((() => {
     const dn = (v) => ((v | 0) * 0.55) | 0;
     return (dn(hairHex >> 16 & 255) << 16) | (dn(hairHex >> 8 & 255) << 8) | dn(hairHex & 255);
   })());
   const hair = new THREE.Mesh(
-    longHair(HEAD_R * 1.015, HEAD_R * (TIGHT ? 1.07 : 1.19), hairLen, TIGHT ? 0.8 : 1),
+    longHair(HEAD_R * 1.015, hairR, hairLen,
+      TIGHT ? 0.8 : 1, 0.42,
+      BOB ? -0.33 : undefined),                // 단발 — 밑단을 턱 밑 한 높이로
     hairMat
   );
   head.add(hair);
@@ -1236,13 +1383,43 @@ export function makeAvatar(opts) {
       band.scale.set(HEAD_SX, 1, HEAD_SZ);
       band.position.y = HEAD_R * 0.86;
       hatG.add(band);
+    } else if (kindH === 'cat') {
+      /* 고양이 머리띠 — 띠 위에 세모 귀 둘. 귀는 머리카락(r 1.19배)
+       * 밖으로 솟아야 실루엣이 갈린다. 안쪽 분홍 세모가 포인트다. */
+      const arc = new THREE.Mesh(
+        new THREE.TorusGeometry(hairR + 0.02, 0.018, 10, 26, Math.PI * 0.84), hm);
+      arc.scale.set(HEAD_SX * 1.05, HEAD_SY * 0.97, 1);   // 세로를 눌러야 정수리에 얹힌다 — 둥근 그대로면 헤드폰처럼 뜬다
+      arc.position.set(0, -0.025, 0.05);          // 머리에 살짝 파묻혀야 띠다 — 띄우면 헤드폰이다
+      arc.rotation.z = Math.PI * 0.08;           // 호(0~0.84π)의 가운데를 정수리로
+      arc.rotation.x = -0.16;
+      hatG.add(arc);
+      /* 귀는 띠의 자식으로 붙인다 — 머리 그룹에 따로 띄우면 띠와
+       * 귀가 각자 놀아 '붙어 있는 물건' 으로 안 보인다. 띠 원둘레의
+       * 각도에서 자리를 뽑고, 뾰족한 끝이 그 반지름 방향을 보게 돌린다. */
+      /* 귀 각도는 '호의 가운데(0.42π)' 기준으로 벌린다. 정수리(0.5π)
+       * 기준으로 달면 호를 바로 세우는 회전(+0.08π)에 귀가 같이 밀려
+       * 한쪽으로 삐뚤어진다 — 한 번 그랬다. */
+      const RB = hairR + 0.02, MID = Math.PI * 0.42;
+      for (const th of [MID - 0.55, MID + 0.55]) {
+        const rz = th - Math.PI / 2;             // 원뿔(+y)을 반지름 방향으로
+        const earO = new THREE.Mesh(new THREE.ConeGeometry(0.105, 0.18, 14), hm);
+        earO.scale.set(1, 1, 0.55);
+        earO.position.set(Math.cos(th) * (RB + 0.055), Math.sin(th) * (RB + 0.055), 0);
+        earO.rotation.z = rz;
+        arc.add(earO);
+        const earI = new THREE.Mesh(new THREE.ConeGeometry(0.062, 0.115, 12), flat(0xf0a0b8));
+        earI.scale.set(1, 1, 0.5);
+        earI.position.set(Math.cos(th) * (RB + 0.05), Math.sin(th) * (RB + 0.05), 0.028);
+        earI.rotation.z = rz;
+        arc.add(earI);
+      }
     } else if (kindH === 'band') {
       /* 머리띠 — 머리카락 위를 넘어가는 호. 머리카락(r 1.19배) 밖으로
        * 둘러야 보인다. 실제 머리띠처럼 살짝 앞으로 기울인다. */
       const arc = new THREE.Mesh(
-        new THREE.TorusGeometry(HEAD_R * 1.24, 0.021, 10, 26, Math.PI * 0.84), hm);
-      arc.scale.set(HEAD_SX * 1.02, HEAD_SY * 1.04, 1);
-      arc.position.set(0, 0.01, 0.05);
+        new THREE.TorusGeometry(hairR + 0.02, 0.021, 10, 26, Math.PI * 0.84), hm);
+      arc.scale.set(HEAD_SX * 1.05, HEAD_SY * 0.97, 1);   // 세로를 눌러야 정수리에 얹힌다 — 둥근 그대로면 헤드폰처럼 뜬다
+      arc.position.set(0, -0.025, 0.05);          // 머리에 살짝 파묻혀야 띠다 — 띄우면 헤드폰이다
       arc.rotation.z = Math.PI * 0.08;           // 호가 정수리를 덮게 가운데로
       arc.rotation.x = -0.16;                    // 살짝 앞으로
       hatG.add(arc);
