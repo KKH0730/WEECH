@@ -175,22 +175,18 @@
             <button data-view="cinema">전체화면</button>
           </div>
         </div>
-        <div id="lookMenu">
-          <button id="lookBtn" class="icon" title="아바타 꾸미기" aria-label="아바타 꾸미기" aria-expanded="false">
+        <div id="charMenu">
+          <button id="charBtn" class="icon" title="캐릭터 고르기" aria-label="캐릭터 고르기" aria-expanded="false">
             <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
               <circle cx="12" cy="7.5" r="4"/>
               <path d="M4.5 21c0-4.1 3.4-7 7.5-7s7.5 2.9 7.5 7"/>
             </svg>
           </button>
-          <!-- 왼쪽엔 입어 보는 내 모습(3D), 오른쪽엔 고를 것들.
-               선택지는 game.js 가 옷장(WARDROBE)을 보고 채운다 -->
-          <div id="lookDrop" hidden>
-            <div id="lookStage"></div>
-            <div id="lookRows"></div>
-            <div id="lookFoot">
-              <button id="lookSave">입기</button>
-              <button id="lookCancel">취소</button>
-            </div>
+          <!-- 아홉 캐릭터가 3행 3열로 선다. 칸은 game.js 가 avatar3d 의
+               CHARACTERS 를 보고 채우고, 사진도 거기서 찍는다 -->
+          <div id="charDrop" hidden>
+            <div id="charHead">캐릭터 고르기</div>
+            <div id="charGrid"></div>
           </div>
         </div>
       </div>

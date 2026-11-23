@@ -5,7 +5,7 @@
 
 ```
 node server.js      →  http://localhost:3000
-npm test            →  전부 (138건)
+npm test            →  전부 (180건)
 node test/room3d_test.js   →  한 묶음만
 ```
 
@@ -193,7 +193,7 @@ public/
 public/npc.js      NPCS 의 id·kind·name·icon·hellos·걸음새, TALK 의 키
 public/scene3d.js  buildNpc(kind) 의 분기와 모양
 public/roomdef.js  XMAS (크리스마스 장식 자체를 바꾼다면)
-test/client_test.mjs  CHARACTERS 목록 (테두리가 사람에게만 붙었는지 볼 때 쓴다)
+test/client_test.mjs  NPC_KINDS 목록 (테두리가 사람에게만 붙었는지 볼 때 쓴다)
 ```
 
 문답 글은 인물이 바뀌어도 **말투만 손보면 내용은 그대로 쓸 수 있게** 적어 둘 것.
@@ -208,7 +208,7 @@ test/client_test.mjs  CHARACTERS 목록 (테두리가 사람에게만 붙었는�
 | `pitch_test.mjs` 음정 감지 | | |
 | `room3d_test.js` 공간·좌석·통행 | | |
 | `client_test.mjs` 브라우저 모듈 적재 | | |
-| `name_test.js` `room_test.js` `empty_test.js` | 필요 | |
+| `name_test.js` `room_test.js` `empty_test.js` `char_test.js` | 필요 | |
 | `pgame_test.js` 음정 게임모드 | 필요 | yt-dlp |
 
 **`node --check` 는 구문만 본다.** 이름이 겹쳐 선언 전에 쓰는 것 같은 건 못 잡는데,

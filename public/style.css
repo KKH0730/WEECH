@@ -1000,20 +1000,17 @@ body.cinema #playerbar:hover{opacity:1;}
   #npcTip, #npcTalk{ bottom:clamp(150px,22vh,220px); }
 }
 
-/* ───────────── 아바타 꾸미기 ─────────────
-   오른쪽 아이콘 열 아래로 펼쳐진다. 고를 것이 많아 스크롤이 생길 수
-   있으므로 최대 높이를 잡아 둔다. */
-#lookMenu{position:relative;}
-/* 버튼 왼쪽으로 펼쳐지는 탈의실.
-   왼쪽 칸은 입어 보는 내 모습(3D), 오른쪽 칸은 고를 것들이다. */
-#lookDrop{
+/* ───────────── 캐릭터 고르기 ─────────────
+   버튼 왼쪽으로 펼쳐지고, 아홉이 3행 3열로 선다. 아홉이 한 번에 다
+   보여야 고르므로 창 너비는 세 칸에 맞춰 좁게 잡는다 — 넓히면 칸이
+   커져 세로로 길어지고, 낮은 창에서는 아랫줄이 화면 밖으로 나간다.
+   그래도 모자랄 때를 대비해 최대 높이만 걸어 둔다. */
+#charMenu{position:relative;}
+#charDrop{
   position:absolute;top:-6px;right:calc(100% + 10px);z-index:40;
-  width:min(560px, calc(100vw - 110px));
-  height:min(480px, 74vh);
-  display:grid;
-  grid-template-columns:42% 1fr;
-  grid-template-rows:1fr auto;
-  gap:0 0.8em;
+  width:min(348px, calc(100vw - 110px));
+  max-height:min(82vh, 640px);
+  overflow-y:auto;overscroll-behavior:contain;
   padding:0.9em;border-radius:1.1em;
   font-size:clamp(11px,0.95vw,13px);
   background:var(--glass);
@@ -1021,63 +1018,44 @@ body.cinema #playerbar:hover{opacity:1;}
   box-shadow:var(--glass-ring), var(--glass-drop);
   animation:popIn .2s var(--glass-ease) both;
 }
-#lookDrop[hidden]{display:none;}
-/* 무대 — 입어 보는 모습이 천천히 좌우로 돈다 */
-#lookStage{
-  grid-row:1;grid-column:1;
-  border-radius:0.8em;overflow:hidden;
-  background:linear-gradient(180deg, rgba(255,255,255,.1), rgba(255,255,255,.03));
-  box-shadow:inset 0 0 0 1px rgba(255,255,255,.08);
+#charDrop[hidden]{display:none;}
+#charHead{
+  font-size:1em;font-weight:700;color:var(--dim);
+  padding:0 0.2em 0.5em;
 }
-#lookStage canvas{display:block;width:100%;height:100%;}
-/* 고를 것들 */
-#lookRows{
-  grid-row:1;grid-column:2;
-  overflow-y:auto;overscroll-behavior:contain;
-  display:flex;flex-direction:column;gap:0.6em;
-  padding-right:4px;
+/* 3행 3열 */
+#charGrid{
+  display:grid;
+  grid-template-columns:repeat(3, 1fr);
+  gap:0.5em;
 }
-.lk-row{display:flex;flex-direction:column;gap:0.3em;}
-.lk-label{font-size:0.9em;color:var(--dim);}
-.lk-opts{display:flex;flex-wrap:wrap;gap:0.38em;}
-/* 실물 미리보기 — 그 선택지를 입은 모습을 작게 찍은 사진 */
-.lk-th{
-  width:3.8em;height:3.8em;padding:0;border:0;border-radius:0.6em;cursor:pointer;
-  overflow:hidden;background:rgba(255,255,255,.07);
+.ch-cell{
+  display:flex;flex-direction:column;padding:0;border:0;cursor:pointer;
+  border-radius:0.75em;overflow:hidden;
+  font-family:inherit;
+  background:linear-gradient(180deg, rgba(255,255,255,.12), rgba(255,255,255,.03));
   box-shadow:inset 0 0 0 1px rgba(255,255,255,.1);
   transition:transform .14s var(--glass-ease), box-shadow .14s var(--glass-ease);
 }
-.lk-th img{display:block;width:100%;height:100%;object-fit:cover;}
-.lk-th:hover{transform:scale(1.07);}
-.lk-th.on{box-shadow:inset 0 0 0 2px var(--accent), 0 0 10px rgba(255,184,77,.35);}
-/* 색 동그라미 */
-.lk-sw{
-  width:1.8em;height:1.8em;border-radius:50%;border:0;cursor:pointer;padding:0;
-  box-shadow:inset 0 1px 1px rgba(255,255,255,.3), inset 0 0 0 1px rgba(0,0,0,.2);
-  transition:transform .14s var(--glass-ease), box-shadow .14s var(--glass-ease);
+/* 사진 비율은 찍은 것(132×176)과 같게 — 어긋나면 사람이 눌리거나 잘린다 */
+.ch-cell img{display:block;width:100%;aspect-ratio:3 / 4;object-fit:contain;}
+/* 이름은 사진 위에 얹지 않고 아래 칸에 따로 둔다.
+   얹으면 딱 신발 높이를 덮어 아홉이 전부 발목에서 잘린 것처럼 보인다. */
+.ch-name{
+  display:block;padding:0.3em 0 0.45em;
+  font-size:0.95em;font-weight:700;color:#f4efe6;
+  background:rgba(10,8,14,.3);
 }
-.lk-sw:hover{transform:scale(1.12);}
-.lk-sw.on{box-shadow:inset 0 0 0 1px rgba(0,0,0,.2), 0 0 0 2px var(--accent);transform:scale(1.08);}
-/* 입기 · 취소 */
-#lookFoot{
-  grid-row:2;grid-column:1 / -1;
-  display:flex;gap:0.5em;justify-content:flex-end;
-  padding-top:0.7em;
-}
-#lookFoot button{
-  border:0;border-radius:999px;cursor:pointer;font-family:inherit;
-  padding:0.5em 1.3em;font-size:1em;font-weight:700;
-  transition:transform .14s var(--glass-ease), filter .14s;
-}
-#lookFoot button:hover{transform:translateY(-1px);filter:brightness(1.08);}
-#lookSave{background:var(--accent);color:var(--accent-ink);}
-#lookCancel{background:rgba(255,255,255,.1);color:var(--dim);}
+.ch-cell:hover{transform:translateY(-2px) scale(1.03);}
+.ch-cell.on{box-shadow:inset 0 0 0 2px var(--accent), 0 0 12px rgba(255,184,77,.35);}
+.ch-cell.on .ch-name{color:var(--accent);}
 
-/* 폰에서는 화면 가운데에 꽉 차게 */
+/* 폰에서는 화면 가운데로. 세 칸은 그대로 둔다 — 3행 3열이 이 창의 전부다 */
 @media (max-width:640px){
-  #lookDrop{
+  #charDrop{
     position:fixed;top:50%;left:50%;right:auto;transform:translate(-50%,-50%);
-    width:min(94vw, 560px);height:min(80vh, 540px);
+    width:min(94vw, 348px);
+    max-height:86vh;
   }
 }
 

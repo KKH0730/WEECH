@@ -221,55 +221,66 @@ if (npc) {
     npc.NPCS.every((n) => n.hellos.length >= 2 && typeof npc.helloOf(n) === 'string'));
 }
 
-console.log('\n── 옷장 (아바타 꾸미기) ──');
+console.log('\n── 아홉 캐릭터 ──');
 {
-  const W = avatar3d.WARDROBE;
-  ok('옷장이 열려 있다', !!W && Array.isArray(W.tops),
-    W ? '상의 ' + W.tops.length + ' · 하의 ' + W.bottoms.length + ' · 피부 ' + W.skins.length : '없음');
+  /* 모듈 아래쪽에 산타·루돌프를 담은 같은 이름의 const 가 또 있다.
+   * 여기서 맨 이름으로 부르면 선언 전에 쓴 꼴이 되어 모듈이 통째로
+   * 죽는다 — CH 로 받아 쓴다. */
+  const P = avatar3d.PARTS, CH = avatar3d.CHARACTERS;
+  ok('아홉이 서 있다', Array.isArray(CH) && CH.length === 9,
+    CH ? CH.map((c) => c.name).join(' · ') : '없음');
+  ok('이름이 겹치지 않는다', new Set(CH.map((c) => c.name)).size === CH.length);
 
-  /* 밖에서 온 값은 뭐가 와도 줄 세워져야 한다 — 서버가 범위를 느슨하게
-   * 중계하므로 어긋난 번호를 접는 건 전적으로 이쪽 몫이다. */
-  const dirty = avatar3d.sanitizeLook([99, -3, 'x', null, 2.7, 1e9, NaN]);
-  ok('어긋난 번호를 접는다', Array.isArray(dirty) &&
-    dirty.every((n, i) => Number.isInteger(n) && n >= 0), JSON.stringify(dirty));
-  ok('배열이 아니면 null', avatar3d.sanitizeLook('abc') === null && avatar3d.sanitizeLook(null) === null);
-  ok('기본 모습은 이름에서 늘 같게',
-    JSON.stringify(avatar3d.lookOf('가나다')) === JSON.stringify(avatar3d.lookOf('가나다')));
+  /* 3행 3열에 늘어놓고 사진만 보고 고르는 자리다. 둘이 똑같아 보이면
+   * 그중 하나는 고를 이유가 없다 — 번호를 박지 말고 '겹치나' 로 본다. */
+  ok('같은 차림이 두 번 나오지 않는다',
+    new Set(CH.map((c) => c.look[7] + '/' + c.look[8])).size === CH.length);
+  const covers = (slot, list) => new Set(CH.map((c) => c.look[slot])).size === list.length;
+  ok('상의가 하나도 안 빠진다', covers(7, P.topStyles), P.topStyles.join(' · '));
+  ok('하의가 하나도 안 빠진다', covers(8, P.bottomStyles), P.bottomStyles.join(' · '));
+  ok('머리 모양이 하나도 안 빠진다', covers(1, P.hairs), P.hairs.join(' · '));
+  ok('눈매 다섯이 하나도 안 빠진다', covers(0, new Array(P.eyes)), P.eyes + '가지');
 
-  /* 고른 대로 입는가 — 상의 색과 머리 모양이 실제로 갈리는지 */
-  const colorsOf = (av) => {
-    const set = new Set();
-    av.root.traverse((o) => { if (o.isMesh && o.material && o.material.color) set.add(o.material.color.getHex()); });
-    return set;
+  /* 밖에서 온 번호를 접는 건 전적으로 이쪽 몫이다 — 서버는 몇 번까지
+   * 있는지 모른 채 0~63 으로만 줄 세워 중계한다. */
+  ok('멀쩡한 번호는 그대로 쓴다',
+    avatar3d.sanitizeChar(0) === 0 && avatar3d.sanitizeChar('3') === 3);
+  ok('모르는 번호와 안 고른 표시는 null',
+    [CH.length, -1, 'x', NaN, null, undefined, ''].every((v) => avatar3d.sanitizeChar(v) === null));
+  ok('안 고른 사람은 이름에서 늘 같은 캐릭터로',
+    avatar3d.charOf('가나다') === avatar3d.charOf('가나다') &&
+    avatar3d.charOf('가나다') < CH.length);
+
+  /* 지어 놓고 보면 아홉이 서로 달라야 한다. 재질 색을 늘어놓은 것이
+   * 서명이다 — 머리 색만 같고 옷이 다르면 서명도 갈린다. */
+  const sig = (av) => {
+    const s = [];
+    av.root.traverse((o) => { if (o.isMesh && o.material && o.material.color) s.push(o.material.color.getHex()); });
+    return s.join(',');
   };
-  /* 색은 옷이 정한다 — 옛 색 칸(3·4번)을 바꿔도 아무 일 없어야 하고,
-   * 옷(7번)을 바꾸면 그 옷의 색이 입혀져야 한다 */
-  const a1 = avatar3d.makeAvatar({ seed: 'x', name: 'x', look: [0, 0, 0, 0, 0, 0, 0, 0, 2] });
-  const a2 = avatar3d.makeAvatar({ seed: 'x', name: 'x', look: [0, 0, 0, 5, 7, 0, 0, 0, 2] });
-  const a3 = avatar3d.makeAvatar({ seed: 'x', name: 'x', look: [0, 0, 0, 0, 0, 0, 0, 5, 2] });
-  ok('옛 색 칸은 읽히지 않는다',
-    colorsOf(a1).has(W.tops[0]) && colorsOf(a2).has(W.tops[0]));
-  ok('옷을 바꾸면 그 옷의 색이 입혀진다',
-    colorsOf(a3).has(W.tops[5]) && !colorsOf(a3).has(W.tops[0]));
-  ok('청자켓의 색은 청색이다', ((W.tops[3] >> 16 & 255) < (W.tops[3] & 255)),
-    '0x' + W.tops[3].toString(16));
+  const built = CH.map((c, i) => avatar3d.makeAvatar({ seed: 'x', name: 'x', char: i }));
+  ok('아홉이 전부 지어진다', built.every((a) => a && a.root));
+  ok('아홉이 서로 다르게 생겼다', new Set(built.map(sig)).size === CH.length);
 
-  const count = (av) => { let n = 0; av.root.traverse((o) => { if (o.isMesh) n++; }); return n; };
-  const long1 = avatar3d.makeAvatar({ seed: 'x', name: 'x', look: [0, 0, 0, 0, 0, 0, 0] });
-  const bob = avatar3d.makeAvatar({ seed: 'x', name: 'x', look: [0, 1, 0, 0, 0, 0, 0] });
-  const bun = avatar3d.makeAvatar({ seed: 'x', name: 'x', look: [0, 2, 0, 0, 0, 0, 0] });
-  ok('머리 모양마다 생김이 다르다 (긴머리=갈래, 올림=묶음)',
-    count(long1) === count(bob) + 2 && count(bun) === count(bob) + 1,
-    '긴 ' + count(long1) + ' · 단발 ' + count(bob) + ' · 올림 ' + count(bun));
-  /* 옷 모양 — 치마·바지·반바지가 기하부터 다른지. 치마만 돌림판이 있다 */
-  const skirted = avatar3d.makeAvatar({ seed: 'x', name: 'x', look: [0,0,0,0,0,0,0,0,0] });
-  const pants = avatar3d.makeAvatar({ seed: 'x', name: 'x', look: [0,0,0,0,0,0,0,0,2] });
-  const hasLathe = (av) => { let n = false; av.root.traverse((o) => { if (o.isMesh && o.geometry.type === 'LatheGeometry') n = true; }); return n; };
-  const plaid = avatar3d.makeAvatar({ seed: 'x', name: 'x', look: [0,0,0,0,0,0,0,0,1] });
-  ok('치마(민무늬·체크)에만 돌림판이 있다', hasLathe(skirted) && hasLathe(plaid) && !hasLathe(pants));
+  /* 안 고른 사람(null) 을 0번으로 눌러 버리면 방에 들어가자마자 똑같은
+   * 얼굴이 줄줄이 선다. null 은 이름이 정해 준 캐릭터로 서야 한다. */
+  const byName = avatar3d.makeAvatar({ seed: '가나다', name: '가나다' });
+  const asNull = avatar3d.makeAvatar({ seed: '가나다', name: '가나다', char: null });
+  const picked = avatar3d.makeAvatar({ seed: '가나다', name: '가나다', char: 0 });
+  const want = sig(built[avatar3d.charOf('가나다')]);
+  ok('안 고르면 이름이 세운다 (null 이 0번으로 굳지 않는다)',
+    sig(byName) === want && sig(asNull) === want);
+  ok('고른 번호가 이름을 이긴다', sig(picked) === sig(built[0]));
+  [byName, asNull, picked].forEach((a) => a.dispose());
+
   /* 옷이 '색만 다른 같은 물건' 이 아니라 진짜 다른 물건인지.
    * 개수를 박아 두면 디테일 하나 늘릴 때마다 엉뚱하게 깨지므로,
-   * 무엇이 어디에 붙었는지를 본다. */
+   * 무엇이 어디에 붙었는지를 본다. 입은 사람은 옷 이름으로 찾는다 —
+   * 캐릭터 순서가 바뀌어도 따라온다. */
+  const wearer = (slot, list, name) => built[CH.findIndex((c) => c.look[slot] === list.indexOf(name))];
+  const top = (name) => wearer(7, P.topStyles, name);
+  const bottom = (name) => wearer(8, P.bottomStyles, name);
+
   const parts = (av) => {
     const out = [];
     av.root.updateMatrixWorld(true);
@@ -280,35 +291,150 @@ console.log('\n── 옷장 (아바타 꾸미기) ──');
     });
     return out;
   };
-  const tee = avatar3d.makeAvatar({ seed: 'x', name: 'x', look: [0,0,0,0,0,0,0,0,2] });
-  const hoodie = avatar3d.makeAvatar({ seed: 'x', name: 'x', look: [0,0,0,0,0,0,0,2,2] });
-  const jacket = avatar3d.makeAvatar({ seed: 'x', name: 'x', look: [0,0,0,0,0,0,0,3,2] });
-  const teeP = parts(tee), hoodP = parts(hoodie), jackP = parts(jacket);
-  //  후드 — 목 뒤(z 음수)에 얹힌 구
-  const hood = (ps) => ps.some((q) => q.kind.indexOf('Sphere') >= 0 && q.y > 0.95 && q.z < -0.08);
+  const teeP = parts(top('티셔츠')), hoodP = parts(top('후드티')), jackP = parts(top('청자켓'));
+  //  후드 — 목 뒤(z 음수)에 얹힌 구. 목은 어깨(0.58)보다 위다
+  const hood = (ps) => ps.some((q) => q.kind.indexOf('Sphere') >= 0 && q.y > 0.60 && q.z < -0.08);
   ok('후드티엔 목 뒤에 모자가 얹힌다', hood(hoodP) && !hood(teeP));
   //  자켓 깃 — 끝이 뾰족한 판(ShapeGeometry) 두 장
   const leaves = (ps) => ps.filter((q) => q.kind.indexOf('Shape') >= 0).length;
   ok('청자켓엔 깃이 두 장 선다', leaves(jackP) === 2 && leaves(teeP) === 0);
-  //  시보리 — 손목께의 원통
-  const cuffs = (ps) => ps.filter((q) => q.kind.indexOf('Cylinder') >= 0 && q.y > 0.6 && q.y < 0.95).length;
-  ok('맨투맨·후드티 소맷부리엔 시보리가 있다',
+  //  시보리 — 손목께(0.32)의 원통. 깃(0.665)이 섞이지 않게 위를 막는다
+  const cuffs = (ps) => ps.filter((q) => q.kind.indexOf('Cylinder') >= 0 && q.y > 0.26 && q.y < 0.45).length;
+  ok('후드티 소맷부리엔 시보리가 있다',
     cuffs(hoodP) === cuffs(teeP) + 2, '티 ' + cuffs(teeP) + ' · 후드 ' + cuffs(hoodP));
   const hasMap = (av) => { let n = false; av.root.traverse((o) => { if (o.isMesh && o.material && o.material.map && o.geometry.type.indexOf('Capsule') >= 0) n = true; }); return n; };
-  ok('무늬 옷은 천(텍스처)을 입는다', !hasMap(tee) && hasMap(hoodie));
-  [plaid, tee, hoodie, jacket].forEach((a) => a.dispose());
-  ok('모양 칸까지 아홉 칸이다', avatar3d.sanitizeLook([]).length === 9);
-  [a1, a2, a3, long1, bob, bun, skirted, pants].forEach((a) => a.dispose());
+  ok('무늬 옷만 천(텍스처)을 입는다', !hasMap(top('티셔츠')) && hasMap(top('후드티')));
+
+  /* 하의 — 치마만 돌림판(Lathe)이고 바지는 다리를 싼다 */
+  const hasLathe = (av) => { let n = false; av.root.traverse((o) => { if (o.isMesh && o.geometry.type === 'LatheGeometry') n = true; }); return n; };
+  ok('치마(민무늬·체크)에만 돌림판이 있다',
+    hasLathe(bottom('치마')) && hasLathe(bottom('체크치마')) && !hasLathe(bottom('바지')));
+
+  /* 머리 — 긴 생머리는 옆 갈래 둘, 올림머리는 정수리 묶음 하나가 더
+   * 붙는다. 차림이 저마다 달라 전체 덩이 수로는 못 센다. 머리 색을
+   * 쓴 덩이만 골라 세면 입은 옷과 무관하게 머리만 보인다. */
+  const hairCount = (name) => {
+    const i = CH.findIndex((c) => c.look[1] === P.hairs.indexOf(name));
+    const hex = P.hairColors[CH[i].look[6]];
+    let n = 0;
+    built[i].root.traverse((o) => {
+      if (!o.isMesh || (o.userData && o.userData.isOutline)) return;
+      if (o.material && o.material.color && o.material.color.getHex() === hex) n++;
+    });
+    return n;
+  };
+  const lng = hairCount('긴 생머리'), bob = hairCount('단발'), bun = hairCount('올림머리');
+  ok('머리 모양마다 생김이 다르다 (긴머리=갈래, 올림=묶음, 포니=밑동+꼬리)',
+    lng === bob + 2 && bun === bob + 1 && hairCount('포니테일') === bob + 2
+      && hairCount('양갈래') === bob + 2,
+    '긴 ' + lng + ' · 단발 ' + bob + ' · 올림 ' + bun);
+
+  /* 묶은 머리가 정수리 '위로' 솟는가.
+   *  조각 수만 세면 묶음이 머리통 속에 파묻혀도 통과한다 — 실제로
+   *  묶음 중심(0.31)이 머리 꼭대기(0.326)보다 낮아, 앞에서 보면
+   *  밤톨머리와 구별이 안 된 적이 있다. 조각의 '자리' 를 본다.
+   *  머리통과 묶음은 둘 다 head 그룹의 자식이라 로컬 y 를 바로 견준다. */
+  for (const name of ['올림머리', '포니테일']) {
+    const i = CH.findIndex((c) => c.look[1] === P.hairs.indexOf(name));
+    const hex = P.hairColors[CH[i].look[6]];
+    const skinHex = P.skins[CH[i].look[2]];
+    let crownY = -Infinity, knotY = -Infinity;
+    built[i].root.traverse((o) => {
+      if (!o.isMesh) return;
+      const col = o.material && o.material.color && o.material.color.getHex();
+      if (col === skinHex && o.geometry.type === 'BufferGeometry' && !o.geometry.attributes.sway) {
+        const pp = o.geometry.attributes.position;
+        for (let k = 0; k < pp.count; k++) crownY = Math.max(crownY, pp.getY(k));
+      }
+      //  묶음·밑동 — 머리색이고 머리 가운데 위쪽에 '자리 잡은' 조각
+      if (col === hex && o.position.y > 0.2) knotY = Math.max(knotY, o.position.y);
+    });
+    ok(name + ' 묶음이 정수리 위로 솟는다 (파묻히면 밤톨이 된다)',
+      knotY >= crownY,
+      '묶음 중심 ' + knotY.toFixed(2) + ' vs 꼭대기 ' + crownY.toFixed(2));
+  }
+
+  /* 볼이 옆머리를 뚫지 않는가.
+   *  두상(headProf)을 머리통에만 먹이고 머리카락을 맨 구로 두면, 볼이
+   *  가장 넓은 높이에서 머리통이 옆머리보다 넓어져 귀 옆에 살색 날개가
+   *  돋은 것처럼 보인다. 실제로 볼을 부풀렸다가 그 꼴이 났다.
+   *
+   *  옆(|z| 작은 데)만 본다 — 얼굴 앞은 원래 드러나는 자리다.
+   *  머리통과 머리카락은 같은 head 그룹에 그대로 붙으므로 로컬 좌표를
+   *  바로 견줘도 된다. */
+  {
+    const i = CH.findIndex((c) => c.look[1] === P.hairs.indexOf('긴 생머리'));
+    const skinHex = P.skins[CH[i].look[2]];
+    let skull = null, hair = null;
+    built[i].root.traverse((o) => {
+      if (!o.isMesh || o.geometry.type !== 'BufferGeometry') return;
+      if (o.geometry.attributes.sway) { hair = o; return; }
+      const col = o.material && o.material.color && o.material.color.getHex();
+      if (col !== skinHex) return;
+      if (!skull || o.geometry.attributes.position.count > skull.geometry.attributes.position.count) skull = o;
+    });
+    ok('머리통과 머리카락을 찾았다', !!skull && !!hair);
+    if (skull && hair) {
+      /*  높이를 칸으로 나눠, 칸마다 옆으로 가장 멀리 나간 점을 잰다.
+       *  보는 데는 귀 아래부터 턱까지 — 볼이 가장 불룩하고 옆머리가
+       *  커튼처럼 곧게 떨어지는 구간이다. 정수리 쪽은 머리카락 그물이
+       *  성겨서(가로줄 스무 개) 칸마다 한 줄만 걸리고, 머리통은 촘촘해
+       *  같은 칸의 더 아래를 재게 된다 — 안 뚫렸는데 뚫렸다고 나온다. */
+      const N = 10, LO = -0.26, HI = 0.02;
+      const side = (mesh) => {
+        const out = new Array(N).fill(0);
+        const p = mesh.geometry.attributes.position;
+        for (let k = 0; k < p.count; k++) {
+          const z = p.getZ(k);
+          if (Math.abs(z) > 0.1) continue;           // 옆만
+          const b = Math.floor((p.getY(k) - LO) / (HI - LO) * N);
+          if (b < 0 || b >= N) continue;
+          out[b] = Math.max(out[b], Math.abs(p.getX(k)));
+        }
+        return out;
+      };
+      const sk = side(skull), hr = side(hair);
+      let worst = -Infinity, at = 0;
+      for (let b = 0; b < N; b++) {
+        if (!sk[b] || !hr[b]) continue;
+        const d = sk[b] - hr[b];
+        if (d > worst) { worst = d; at = LO + (b + 0.5) / N * (HI - LO); }
+      }
+      ok('볼이 옆머리를 뚫고 나오지 않는다', worst <= 0,
+        'y ' + at.toFixed(2) + ' 에서 가장 아슬아슬 — ' +
+        (worst > 0 ? (worst * 100).toFixed(1) + 'cm 튀어나옴' : (-worst * 100).toFixed(1) + 'cm 덮임'));
+    }
+  }
+
+  /* 모자·안경 — 어느 캐릭터가 뭘 쓰는지는 CHARACTERS 가 선언한다.
+   *  선언한 캐릭터에게만 있어야 한다. 번호를 박지 않고 데이터에서
+   *  끌어다 보므로, 누구에게 씌우든 검사는 저절로 따라온다. */
+  ok('모자는 선언한 캐릭터에게만 있다',
+    CH.every((c, i) => !!built[i].root.getObjectByName('hat') === !!c.hat));
+  ok('안경은 선언한 캐릭터에게만 있다',
+    CH.every((c, i) => !!built[i].root.getObjectByName('specs') === !!c.specs));
+  ok('쓰고 걸친 캐릭터가 여럿이다 — 아홉이 민낯이면 다 비슷해 보인다',
+    CH.filter((c) => c.hat || c.specs).length >= 5,
+    CH.filter((c) => c.hat || c.specs).length + '명');
+  /* 묶음이 위로 솟는 머리(올림·포니테일)에 모자를 씌우면 묶음을 뚫는다 */
+  const KNOTTED = [P.hairs.indexOf('올림머리'), P.hairs.indexOf('포니테일')];
+  ok('묶은 머리에는 모자를 씌우지 않았다',
+    CH.every((c) => !(c.hat && KNOTTED.includes(c.look[1]))));
+
+  built.forEach((a) => a.dispose());
 }
 
 console.log('\n── 옷 무늬가 보이는 자리에 그려지는가 ──');
 {
+  const P = avatar3d.PARTS, CH = avatar3d.CHARACTERS;
+  const wearerIdx = (name) => CH.findIndex((c) => c.look[7] === P.topStyles.indexOf(name));
+
   /* three.js 캡슐의 v 는 '몇 번째 띠냐' 로 매겨진다. 둥근 뚜껑이 띠를
    * 거의 다 가져가는 탓에, 높이의 3분의 1인 가운데 원통이 v 의 3% 만
    * 받는다. 그대로 천을 감으면 가슴 그림이 세로로 짓눌려 줄무늬가 되고
    * 고르게 찍은 단추가 위쪽에서만 뭉친다. evenV() 가 v 를 높이에
    * 비례하게 다시 매겨 막는다 — 이게 풀리면 옷이 전부 뭉개진다. */
-  const av = avatar3d.makeAvatar({ seed: 'x', name: 'x', look: [0, 0, 0, 0, 0, 0, 0, 3, 2] });
+  const av = avatar3d.makeAvatar({ seed: 'x', name: 'x', char: wearerIdx('청자켓') });
   let torso = null;
   av.root.traverse((o) => {
     if (!torso && o.isMesh && o.material && o.material.map && o.geometry.type.indexOf('Capsule') >= 0) torso = o;
@@ -337,11 +463,10 @@ console.log('\n── 옷 무늬가 보이는 자리에 그려지는가 ──')
    * 요크·시보리·모자끈을 전부 안 보이는 자리에 그려 놓고 '왜 안
    * 보이나' 를 한참 헤맸다. 그린 자리의 과반이 띠 안에 들어야 한다. */
   const BAND = [0.2, 0.95];
-  const GARMENTS = [[1, '맨투맨'], [2, '후드티'], [3, '청자켓'], [4, '블라우스']];
-  for (const [st, name] of GARMENTS) {
+  for (const name of ['맨투맨', '후드티', '청자켓', '블라우스']) {
     drawLog.length = 0;
     logOn = true;
-    avatar3d.makeAvatar({ seed: 'x', name: '', look: [0, 0, 0, 0, 0, 0, 0, st, 2] }).dispose();
+    avatar3d.makeAvatar({ seed: 'x', name: '', char: wearerIdx(name) }).dispose();
     logOn = false;
     const marks = drawLog.filter((d) => d[1] - d[0] < 0.6);   // 바탕 칠(전면)은 뺀다
     const inside = marks.filter((d) => d[1] > BAND[0] && d[0] < BAND[1]).length;
@@ -354,8 +479,10 @@ console.log('\n── 옷 무늬가 보이는 자리에 그려지는가 ──')
 console.log('\n── 사람이 그려지는가 ──');
 let who = null;
 await step('makeAvatar()', () => {
-  // 테두리는 치마 밑단에만 두르므로, 치마 차림으로 짓는다
-  who = avatar3d.makeAvatar({ seed: 'abc', name: '가나다', look: [0, 0, 0, 0, 0, 0, 0, 0, 0] });
+  // 테두리는 치마 밑단에만 두르므로, 치마를 입은 캐릭터로 짓는다
+  const P = avatar3d.PARTS;
+  const skirted = avatar3d.CHARACTERS.findIndex((c) => c.look[8] === P.bottomStyles.indexOf('치마'));
+  who = avatar3d.makeAvatar({ seed: 'abc', name: '가나다', char: skirted });
   return who.root.children.length + '덩이';
 });
 ok('맞을 자리가 있다', !!who && who.hitMeshes.length > 0);
@@ -364,14 +491,15 @@ let lines = 0;
 if (who) who.root.traverse((o) => { if (o.userData && o.userData.isOutline) lines++; });
 ok('치마 밑단에 테두리가 둘렸다', lines > 0, lines + '줄');
 /* 테두리는 '사람' 에게만 두른다. 배경에 두르면 지브리가 아니라 만화가 된다.
- * 산타와 루돌프도 사람 쪽이므로 둘러야 맞다 — 가구·벽에만 없으면 된다. */
-const CHARACTERS = ['santa', 'deer'];
+ * 산타와 루돌프도 사람 쪽이므로 둘러야 맞다 — 가구·벽에만 없으면 된다.
+ * (인물이 바뀌면 이 목록도 같이 고친다 — CLAUDE.md 8절) */
+const NPC_KINDS = ['santa', 'deer'];
 let onChar = 0, onRoom = 0;
 world.scene.traverse((o) => {
   if (!(o.userData && o.userData.isOutline)) return;
   let p = o, kind = '';
   while (p) { if (p.name) { kind = p.name; break; } p = p.parent; }
-  if (CHARACTERS.indexOf(kind) >= 0) onChar++; else onRoom++;
+  if (NPC_KINDS.indexOf(kind) >= 0) onChar++; else onRoom++;
 });
 ok('산타·루돌프에는 테두리가 있다', onChar > 0, onChar + '줄');
 ok('가구와 벽에는 테두리가 없다', onRoom === 0,
