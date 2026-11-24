@@ -324,17 +324,18 @@ console.log('\n── 아홉 캐릭터 ──');
     return n;
   };
   const lng = hairCount('긴 생머리'), bob = hairCount('단발'), bun = hairCount('올림머리');
-  ok('머리 모양마다 생김이 다르다 (긴머리=갈래, 올림=묶음, 포니=밑동+꼬리)',
-    lng === bob + 2 && bun === bob + 1 && hairCount('포니테일') === bob + 2
-      && hairCount('양갈래') === bob + 2,
-    '긴 ' + lng + ' · 단발 ' + bob + ' · 올림 ' + bun);
+  ok('머리 모양마다 생김이 다르다 (긴머리=갈래, 올림=묶음, 리프=가르마, 반묶음=꽁지+앞머리)',
+    lng === bob + 2 && bun === bob + 1 && hairCount('리프컷') === bob + 3
+      && hairCount('반묶음') === bob + 6 && hairCount('양갈래') === bob + 2,
+    '긴 ' + lng + ' · 단발 ' + bob + ' · 올림 ' + bun + ' · 리프 ' + hairCount('리프컷')
+      + ' · 반묶음 ' + hairCount('반묶음'));
 
   /* 묶은 머리가 정수리 '위로' 솟는가.
    *  조각 수만 세면 묶음이 머리통 속에 파묻혀도 통과한다 — 실제로
    *  묶음 중심(0.31)이 머리 꼭대기(0.326)보다 낮아, 앞에서 보면
    *  밤톨머리와 구별이 안 된 적이 있다. 조각의 '자리' 를 본다.
    *  머리통과 묶음은 둘 다 head 그룹의 자식이라 로컬 y 를 바로 견준다. */
-  for (const name of ['올림머리', '포니테일']) {
+  for (const name of ['올림머리', '반묶음']) {
     const i = CH.findIndex((c) => c.look[1] === P.hairs.indexOf(name));
     const hex = P.hairColors[CH[i].look[6]];
     const skinHex = P.skins[CH[i].look[2]];
@@ -416,8 +417,8 @@ console.log('\n── 아홉 캐릭터 ──');
   ok('쓰고 걸친 캐릭터가 여럿이다 — 아홉이 민낯이면 다 비슷해 보인다',
     CH.filter((c) => c.hat || c.specs).length >= 5,
     CH.filter((c) => c.hat || c.specs).length + '명');
-  /* 묶음이 위로 솟는 머리(올림·포니테일)에 모자를 씌우면 묶음을 뚫는다 */
-  const KNOTTED = [P.hairs.indexOf('올림머리'), P.hairs.indexOf('포니테일')];
+  /* 묶음이 위로 솟는 머리(올림머리·반묶음)에 모자를 씌우면 묶음을 뚫는다 */
+  const KNOTTED = [P.hairs.indexOf('올림머리'), P.hairs.indexOf('반묶음')];
   ok('묶은 머리에는 모자를 씌우지 않았다',
     CH.every((c) => !(c.hat && KNOTTED.includes(c.look[1]))));
 
@@ -463,7 +464,7 @@ console.log('\n── 옷 무늬가 보이는 자리에 그려지는가 ──')
    * 요크·시보리·모자끈을 전부 안 보이는 자리에 그려 놓고 '왜 안
    * 보이나' 를 한참 헤맸다. 그린 자리의 과반이 띠 안에 들어야 한다. */
   const BAND = [0.2, 0.95];
-  for (const name of ['맨투맨', '후드티', '청자켓', '블라우스']) {
+  for (const name of ['맨투맨', '후드티', '청자켓', '블라우스', '스트릿 자켓', '유카타']) {
     drawLog.length = 0;
     logOn = true;
     avatar3d.makeAvatar({ seed: 'x', name: '', char: wearerIdx(name) }).dispose();

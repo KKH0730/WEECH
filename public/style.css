@@ -1254,17 +1254,23 @@ body.cinema #topDock:hover{opacity:1;}
              color .18s ease;
 }
 
-/* 눌리는 것들 — 손이 닿으면 한 꺼풀 밝아지고 살짝 떠오른다 */
+/* 눌리는 것들 — 손이 닿으면 한 꺼풀 밝아지고, 독립 버튼은 살짝 떠오른다.
+ * 패널 가장자리에 붙은 접기 탭(#barToggle·#chatToggle)은 translateX(-50%) 로
+ * 가운데 맞춰져 있어 transform 을 덮어쓰면 옆으로 밀리고 패널에서도 떨어진다. */
 .icon:hover, .pill:hover, #barToggle:hover, #chatToggle:hover,
 #peopleToggle:hover{
   background:var(--glass-hover);
   box-shadow:var(--glass-ring), 0 14px 34px rgba(0,0,0,.42);
+}
+.icon:hover, .pill:hover, #peopleToggle:hover{
   transform:translateY(-1px);
 }
 .icon:active, .pill:active, #barToggle:active, #chatToggle:active,
 #peopleToggle:active{
-  transform:translateY(0) scale(.97);
   box-shadow:inset 0 2px 8px rgba(0,0,0,.3), inset 0 0 0 1px rgba(255,255,255,.08);
+}
+.icon:active, .pill:active, #peopleToggle:active{
+  transform:translateY(0) scale(.97);
 }
 
 /* 켜진 것 — 색을 덮어 칠하지 않고 유리 안에 호박빛을 넣는다.
@@ -1316,8 +1322,7 @@ body.cinema #topDock:hover{opacity:1;}
 
 /* 움직임을 줄여 달라고 한 사람에게는 떠오르지 않는다 */
 @media (prefers-reduced-motion: reduce){
-  .icon:hover, .pill:hover, #barToggle:hover, #chatToggle:hover,
-  #peopleToggle:hover{ transform:none; }
+  .icon:hover, .pill:hover, #peopleToggle:hover{ transform:none; }
 }
 
 /* 글이 많은 창은 유리를 더 두껍게 — 얇으면 뒤 글자가 비쳐 읽기 힘들다 */
